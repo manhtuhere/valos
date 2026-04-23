@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Val OS — From Prompt User to System Architect</title>
+<style>
+  :root{
+    --bg:#07050d;
+    --bg-2:#0c0918;
+    --ink:#f6f1ff;
+    --ink-2:#c9bfe6;
+    --mute:#8a82a8;
+    --line:rgba(255,255,255,0.08);
+    --line-2:rgba(255,255,255,0.14);
+    --pink:#f9b6ff;
+    --pink-2:#ff8bd8;
+    --violet:#8d6bff;
+    --cyan:#8ff0ff;
+    --accent:linear-gradient(90deg,#f9b6ff 0%,#b48bff 50%,#8ff0ff 100%);
+    --card:rgba(255,255,255,0.03);
+    --card-2:rgba(255,255,255,0.05);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Inter","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+  body{
+    background:
+      radial-gradient(1200px 600px at 85% -10%, rgba(249,182,255,0.12), transparent 60%),
+      radial-gradient(900px 500px at -10% 20%, rgba(141,107,255,0.14), transparent 60%),
+      radial-gradient(700px 400px at 50% 110%, rgba(143,240,255,0.08), transparent 60%),
+      var(--bg);
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:56px 28px 96px}
+
+  /* Top meta row */
+  .meta{display:flex;align-items:center;justify-content:space-between;gap:20px;color:var(--mute);font-size:13px;margin-bottom:36px;flex-wrap:wrap}
+  .meta .left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .meta .dot{width:6px;height:6px;border-radius:50%;background:var(--pink-2);box-shadow:0 0 12px var(--pink-2)}
+  .meta .right{display:flex;gap:10px;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;padding:6px 12px;border:1px solid var(--line-2);border-radius:999px;font-size:12px;letter-spacing:0.02em;color:var(--ink-2);background:rgba(255,255,255,0.02)}
+  .pill.solid{background:var(--pink);color:#190726;border-color:transparent;font-weight:600}
+  .pill.outline-pink{border-color:rgba(249,182,255,0.6);color:var(--pink)}
+  .pill.outline-violet{border-color:rgba(141,107,255,0.55);color:#c9b3ff}
+  .pill.outline-cyan{border-color:rgba(143,240,255,0.45);color:var(--cyan)}
+
+  /* Hero */
+  .hero{
+    position:relative;
+    border:1px solid var(--line-2);
+    border-radius:28px;
+    padding:48px 44px 44px;
+    background:linear-gradient(180deg,rgba(141,107,255,0.08),rgba(249,182,255,0.04) 40%,rgba(0,0,0,0) 100%),var(--bg-2);
+    overflow:hidden;
+  }
+  .hero::before{
+    content:"";position:absolute;inset:-1px;border-radius:28px;padding:1px;
+    background:linear-gradient(135deg,rgba(249,182,255,0.5),rgba(141,107,255,0.3) 50%,rgba(143,240,255,0.4));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+  }
+  .hero .track{font-size:12px;letter-spacing:0.22em;color:var(--pink);text-transform:uppercase;margin-bottom:14px}
+  .hero h1{font-size:64px;line-height:1.02;letter-spacing:-0.02em;margin:0 0 18px;font-weight:800}
+  .hero h1 .grad{background:var(--accent);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero .tagline{font-size:20px;color:var(--ink-2);max-width:760px;margin:0 0 26px}
+  .hero .challenge{
+    margin-top:24px;padding:18px 20px;border-radius:16px;
+    background:rgba(249,182,255,0.06);border:1px solid rgba(249,182,255,0.2);
+    color:var(--ink-2);font-size:15px
+  }
+  .hero .challenge b{color:var(--pink)}
+  .hero .cta{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:12px;border:1px solid var(--line-2);color:var(--ink);text-decoration:none;font-weight:600;font-size:14px;background:var(--card)}
+  .btn:hover{border-color:rgba(249,182,255,0.5)}
+  .btn.primary{background:linear-gradient(90deg,#f9b6ff,#b48bff);color:#190726;border-color:transparent}
+  .btn.primary:hover{filter:brightness(1.05)}
+
+  /* Sections */
+  section{margin-top:56px}
+  .eyebrow{font-size:12px;letter-spacing:0.22em;color:var(--pink);text-transform:uppercase;margin:0 0 10px}
+  h2{font-size:32px;margin:0 0 20px;letter-spacing:-0.01em;font-weight:700}
+  h3{font-size:18px;margin:0 0 8px;font-weight:700}
+  p{color:var(--ink-2)}
+
+  /* Grid cards */
+  .grid{display:grid;gap:16px}
+  .grid-2{grid-template-columns:1fr 1fr}
+  .grid-3{grid-template-columns:repeat(3,1fr)}
+  .grid-4{grid-template-columns:repeat(4,1fr)}
+  @media (max-width:820px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);background:var(--card);border-radius:18px;padding:22px}
+  .card .num{font-size:11px;letter-spacing:0.2em;color:var(--mute);text-transform:uppercase}
+  .card p{margin:8px 0 0;font-size:14.5px}
+
+  /* Pipeline breakdown */
+  .pipe{display:grid;grid-template-columns:repeat(11,1fr);gap:6px;margin-top:10px}
+  @media (max-width:1080px){.pipe{grid-template-columns:repeat(6,1fr)}}
+  @media (max-width:600px){.pipe{grid-template-columns:repeat(3,1fr)}}
+  .stage{border:1px solid var(--line);background:var(--card-2);border-radius:12px;padding:10px;text-align:center}
+  .stage .k{font-size:10px;letter-spacing:0.18em;color:var(--pink);text-transform:uppercase}
+  .stage .v{font-size:12.5px;color:var(--ink-2);margin-top:4px}
+
+  /* ICP */
+  .icp{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+  @media (max-width:820px){.icp{grid-template-columns:1fr}}
+  .icp .card{position:relative;overflow:hidden}
+  .icp .tier{position:absolute;top:14px;right:14px;font-size:10px;letter-spacing:0.22em;color:var(--pink);text-transform:uppercase}
+
+  /* Feature list */
+  .feat{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media (max-width:820px){.feat{grid-template-columns:1fr}}
+  .feat .row{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+  .feat .glyph{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-size:14px;background:linear-gradient(135deg,rgba(249,182,255,0.2),rgba(141,107,255,0.2));border:1px solid rgba(249,182,255,0.25);flex-shrink:0}
+  .feat h3{font-size:15px;margin:0}
+  .feat p{margin:4px 0 0;font-size:13.5px}
+
+  /* Repo block */
+  .repo{border:1px solid var(--line-2);border-radius:18px;background:var(--bg-2);padding:24px}
+  .repo .path{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:var(--cyan);font-size:13px;margin-bottom:14px}
+  .tree{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;white-space:pre;color:var(--ink-2);font-size:12.5px;background:rgba(0,0,0,0.35);padding:16px;border-radius:12px;border:1px solid var(--line);overflow:auto}
+
+  /* README */
+  .readme{border:1px solid var(--line);border-radius:18px;background:var(--card);padding:24px;margin-top:16px}
+  .readme h3{margin-top:0;font-size:16px}
+  .readme pre{background:rgba(0,0,0,0.35);padding:12px 14px;border-radius:10px;border:1px solid var(--line);color:var(--ink-2);font-size:12.5px;overflow:auto;margin:10px 0 16px}
+  .readme code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+  .readme ul{margin:8px 0 16px;padding-left:20px;color:var(--ink-2)}
+  .readme li{margin:4px 0;font-size:14px}
+
+  /* Map block */
+  .map{border:1px solid rgba(141,107,255,0.4);background:linear-gradient(180deg,rgba(141,107,255,0.08),transparent 80%);border-radius:18px;padding:24px}
+  .map .row{display:grid;grid-template-columns:1fr 24px 1fr;gap:14px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+  .map .row:first-of-type{border-top:0}
+  .map .lhs{color:var(--ink-2);font-size:14px}
+  .map .arrow{color:var(--pink);text-align:center;font-weight:700}
+  .map .rhs{color:var(--ink);font-size:14px;font-weight:600}
+
+  footer{margin-top:80px;padding-top:28px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- META -->
+  <div class="meta">
+    <div class="left">
+      <span class="dot"></span>
+      <span>Straight Up! Hackathon · Ant International Foundation</span>
+      <span class="pill">Track 5 · Emerging AI Opportunity Space</span>
+    </div>
+    <div class="right">
+      <span class="pill outline-pink">System Design</span>
+      <span class="pill outline-violet">AI Architecture</span>
+      <span class="pill outline-cyan">Women in Tech</span>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="track">From Prompt User to System Architect</div>
+    <h1>Val OS — <span class="grad">the agentic playground</span> where you don't prompt, you direct.</h1>
+    <p class="tagline">
+      A judgment-first operating system that turns raw ideas into typed architecture,
+      routing decisions, and execution plans — with every decision visible, critiqued,
+      and editable. Built so the next generation of system architects can <b>see how a system thinks</b>
+      before they build one.
+    </p>
+    <div class="challenge">
+      <b>Track challenge →</b> How might we build AI-native development tools or "agentic playgrounds"
+      that move young women from prompt-engineering to building and directing system architecture?
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="./val-os.html">▶ Open the live prototype</a>
+      <a class="btn" href="https://github.com/valsea/val-os" target="_blank" rel="noopener">→ github.com/valsea/val-os</a>
+      <a class="btn" href="./val-os-backend/README.md">📖 Backend README</a>
+    </div>
+  </div>
+
+  <!-- WHAT -->
+  <section>
+    <div class="eyebrow">01 · What it is</div>
+    <h2>An agentic playground with a judgment loop on top.</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="num">The problem</div>
+        <h3>Prompting is a dead-end career.</h3>
+        <p>If the next wave of infrastructure is designed by one demographic, its biases get automated at scale. Architecture literacy — the ability to shape systems, not just query them — stays locked behind senior-engineer apprenticeship pipelines most young women never get access to.</p>
+      </div>
+      <div class="card">
+        <div class="num">The shift</div>
+        <h3>Val OS makes architecture legible.</h3>
+        <p>Every idea becomes an inspectable 11-stage pipeline: intent, reframe, scope, architecture, research, execution, routing, critic, output, memory. You watch the system reason, catch its own mistakes, and dispatch work to specialized agents. You learn architecture by directing one.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- GOAL -->
+  <section>
+    <div class="eyebrow">02 · Goal</div>
+    <h2>Close the architecture gap — by exposure, not lectures.</h2>
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="num">Primary</div>
+        <h3>Literacy through visibility</h3>
+        <p>Turn the black box of "AI agents doing things" into a typed, readable pipeline. If you can see scope, routing, and critic decisions, you can critique them — and start making them yourself.</p>
+      </div>
+      <div class="card">
+        <div class="num">Secondary</div>
+        <h3>Lower the floor, not the ceiling</h3>
+        <p>A teenager with an idea should be able to produce the same structured plan a staff engineer would. The hard work of scoping and routing is done on the glass, in the open.</p>
+      </div>
+      <div class="card">
+        <div class="num">Tertiary</div>
+        <h3>Build the habit of judgment</h3>
+        <p>The critic gate teaches users that good outputs come from structured self-critique, not one-shot prompts. Revision loops are the product.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- OUTCOME -->
+  <section>
+    <div class="eyebrow">03 · Outcome</div>
+    <h2>What a user gets from a single prompt.</h2>
+    <div class="map">
+      <div class="row"><div class="lhs">"Build me a founder operating system"</div><div class="arrow">→</div><div class="rhs">Core goal, success criteria, audience</div></div>
+      <div class="row"><div class="lhs">Reframe</div><div class="arrow">→</div><div class="rhs">The wedge: why this, why now, what makes it sharp</div></div>
+      <div class="row"><div class="lhs">Scope</div><div class="arrow">→</div><div class="rhs">Must-have, nice-to-have, non-goals, explicit failure states</div></div>
+      <div class="row"><div class="lhs">Architecture</div><div class="arrow">→</div><div class="rhs">Typed modules, responsibilities, data flow, dependencies</div></div>
+      <div class="row"><div class="lhs">Research plan</div><div class="arrow">→</div><div class="rhs">Dispatched to Manus — comparisons, tradeoffs, patterns</div></div>
+      <div class="row"><div class="lhs">Execution plan</div><div class="arrow">→</div><div class="rhs">Dispatched to OpenClaw — step-by-step builds with acceptance criteria</div></div>
+      <div class="row"><div class="lhs">Routing</div><div class="arrow">→</div><div class="rhs">Every task sent to the right worker (val_clone / manus / openclaw / code_builder / critic / memory)</div></div>
+      <div class="row"><div class="lhs">Critic verdict</div><div class="arrow">→</div><div class="rhs">approve · revise · reject — with score, failures, and fixes</div></div>
+      <div class="row"><div class="lhs">Revision loop</div><div class="arrow">→</div><div class="rhs">Re-runs stages with critic fixes injected (up to 2×)</div></div>
+      <div class="row"><div class="lhs">PRD output</div><div class="arrow">→</div><div class="rhs">Shippable one-pager: goals, users, MVP, risks, rollout</div></div>
+      <div class="row"><div class="lhs">Memory writeback</div><div class="arrow">→</div><div class="rhs">Patterns / lessons / principles persist to typed tables (confidence-gated)</div></div>
+    </div>
+  </section>
+
+  <!-- BREAKDOWN -->
+  <section>
+    <div class="eyebrow">04 · Breakdown</div>
+    <h2>The 11-stage judgment pipeline.</h2>
+    <p style="max-width:820px">Every stage has a typed Pydantic schema on its boundary. Nothing is a free-text blob — which is why the pipeline is inspectable, the critic can score it, and the revision loop can target specific failures.</p>
+    <div class="pipe">
+      <div class="stage"><div class="k">01</div><div class="v">Intent</div></div>
+      <div class="stage"><div class="k">02</div><div class="v">Reframe</div></div>
+      <div class="stage"><div class="k">03</div><div class="v">Memory</div></div>
+      <div class="stage"><div class="k">04</div><div class="v">Scope</div></div>
+      <div class="stage"><div class="k">05</div><div class="v">Architect</div></div>
+      <div class="stage"><div class="k">06</div><div class="v">Research</div></div>
+      <div class="stage"><div class="k">07</div><div class="v">Execution</div></div>
+      <div class="stage"><div class="k">08</div><div class="v">Router</div></div>
+      <div class="stage"><div class="k">09</div><div class="v">Critic</div></div>
+      <div class="stage"><div class="k">10</div><div class="v">Output</div></div>
+      <div class="stage"><div class="k">11</div><div class="v">Memory wb</div></div>
+    </div>
+
+    <div class="grid grid-3" style="margin-top:26px">
+      <div class="card">
+        <div class="num">Loop A</div>
+        <h3>Revision loop</h3>
+        <p>If the critic returns <b>revise</b>, scope → architect → research → execution → router → critic re-runs with the critic's failures and fixes injected into context. Capped at 2×.</p>
+      </div>
+      <div class="card">
+        <div class="num">Loop B</div>
+        <h3>Execution feedback</h3>
+        <p>Routes fan out to Manus + OpenClaw in parallel via <code>asyncio.gather</code>. If any worker returns <b>needs_revision</b>, the critic re-runs with worker output attached.</p>
+      </div>
+      <div class="card">
+        <div class="num">Loop C</div>
+        <h3>Memory writeback</h3>
+        <p>Patterns, failures, and principles are proposed with a confidence score. Only entries above threshold (<code>≥0.75</code>) persist to the typed memory tables.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ICP -->
+  <section>
+    <div class="eyebrow">05 · ICP</div>
+    <h2>Who this is for.</h2>
+    <div class="icp">
+      <div class="card">
+        <div class="tier">Primary</div>
+        <h3>Young women, 17–28, moving up the stack</h3>
+        <p>Students, bootcamp grads, and early-career builders who are fluent with AI tools but locked out of senior-architect mentorship. They want to design systems, not just prompt them — and they learn best by watching a system think out loud.</p>
+      </div>
+      <div class="card">
+        <div class="tier">Secondary</div>
+        <h3>Non-traditional builders</h3>
+        <p>Self-taught devs, career switchers, and operators-turned-founders who skipped the traditional CS path. They need scaffolding for scoping, routing, and trade-off reasoning that a senior engineer would normally give over a whiteboard.</p>
+      </div>
+      <div class="card">
+        <div class="tier">Tertiary</div>
+        <h3>Solo founders</h3>
+        <p>Any founder who needs a thinking partner that pushes back — not a yes-machine. The critic gate and revision loop produce the kind of structured self-challenge a cofounder would force on you.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section>
+    <div class="eyebrow">06 · Features</div>
+    <h2>What's in the box.</h2>
+    <div class="feat">
+      <div class="row"><div class="glyph">◆</div><div><h3>Self-contained HTML playground</h3><p>No install, no keys required. Demo mode runs the full 11-stage pipeline locally in the browser for instant architecture literacy.</p></div></div>
+      <div class="row"><div class="glyph">⊞</div><div><h3>Three modes, one file</h3><p>Demo (local), Real API (browser-direct to Anthropic), or Backend (FastAPI orchestrator) — toggle in the header.</p></div></div>
+      <div class="row"><div class="glyph">▦</div><div><h3>Typed memory, scored retrieval</h3><p>Six memory types: founder_principles, product_preferences, routing_rules, approved_patterns, failure_lessons, project_state — tag-scored with per-category caps.</p></div></div>
+      <div class="row"><div class="glyph">⚖</div><div><h3>Critic with shallow-prompt defense</h3><p>Score-based gate (approve/revise/reject). Penalises vague prompts even when the bundle looks well-shaped — so "build a thing" can't coast on template quality.</p></div></div>
+      <div class="row"><div class="glyph">↻</div><div><h3>Auto revision loop</h3><p>When the critic says revise, the pipeline re-runs with failures and fixes injected into context. Capped at 2× so it can't thrash.</p></div></div>
+      <div class="row"><div class="glyph">⇆</div><div><h3>Parallel worker fan-out</h3><p>Research routes → Manus. Execution routes → OpenClaw. Dispatched concurrently via httpx + asyncio.gather. Pluggable: match the JSON contract, swap the URL.</p></div></div>
+      <div class="row"><div class="glyph">◉</div><div><h3>Execution feedback loop</h3><p>Worker results flow back into the critic. Any needs_revision signal triggers a re-critique with worker logs attached.</p></div></div>
+      <div class="row"><div class="glyph">▣</div><div><h3>Postgres-backed memory</h3><p>6 typed memory tables + audit table via docker-compose. Schema and PRD seeds auto-loaded on boot.</p></div></div>
+    </div>
+  </section>
+
+  <!-- REPO -->
+  <section>
+    <div class="eyebrow">07 · GitHub repo</div>
+    <h2>Shipped and inspectable.</h2>
+    <div class="repo">
+      <div class="path">github.com/valsea/val-os &nbsp;·&nbsp; MIT &nbsp;·&nbsp; Python 3.11 · FastAPI · Postgres 16 · asyncpg · httpx · Pydantic 2</div>
+<div class="tree">val-os/
+├── val-os.html                  ← self-contained prototype, three modes
+├── val-os-hackathon.html        ← this pitch page
+└── val-os-backend/
+    ├── docker-compose.yml       ← postgres:16 + schema + seeds
+    ├── .env.example
+    ├── README.md
+    ├── sql/
+    │   ├── schema.sql           ← 6 typed memory tables + plan_runs
+    │   └── seeds.sql            ← 26 PRD-seeded rows
+    ├── orchestrator/
+    │   ├── main.py              ← /plan · /plan/revise · /memory · /memory/commit
+    │   ├── brain.py             ← intent → reframe → ... → memwb
+    │   ├── schemas.py           ← Pydantic types at every boundary
+    │   ├── memory.py            ← tag-scored retrieval + writeback
+    │   ├── workers.py           ← parallel dispatch_routes()
+    │   └── config.py
+    ├── workers/
+    │   ├── manus/main.py        ← /research (shape-correct stub)
+    │   └── openclaw/main.py     ← /execute (shape-correct stub)
+    └── scripts/
+        └── smoke.py             ← offline pipeline test, no DB needed</div>
+    </div>
+  </section>
+
+  <!-- README -->
+  <section>
+    <div class="eyebrow">08 · README</div>
+    <h2>How a judge (or contributor) runs it.</h2>
+    <div class="readme">
+      <h3>30-second demo (no install)</h3>
+      <p style="margin:0">Open <code>val-os.html</code> in a browser. Demo mode is on by default — paste any prompt, watch 11 typed stages paint in real time. Toggle the auto-revise switch to watch the critic send the pipeline back for revision.</p>
+
+      <h3 style="margin-top:20px">Full stack (four terminals)</h3>
+<pre><code># 1. Postgres + schema + seeds
+cd val-os-backend
+cp .env.example .env
+docker compose up -d
+
+# 2. Manus worker (research)
+cd workers/manus &amp;&amp; uvicorn main:app --port 8081
+
+# 3. OpenClaw worker (execution)
+cd workers/openclaw &amp;&amp; uvicorn main:app --port 8082
+
+# 4. Orchestrator
+cd val-os-backend &amp;&amp; uvicorn orchestrator.main:app --port 8080</code></pre>
+
+      <h3>Live smoke</h3>
+<pre><code>curl -s http://localhost:8080/plan \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "raw_prompt": "Build me a founder operating system that turns prompts into product specs.",
+    "auto_revise": true,
+    "dispatch_workers": true
+  }' | jq '{critic: .critic.status, score: .critic.score, revisions: .revisions}'</code></pre>
+
+      <h3>Offline smoke (no DB, no workers)</h3>
+<pre><code>python3 scripts/smoke.py
+# exits SMOKE OK · meta=approve@0.83 · "build a thing"=reject@0.58</code></pre>
+
+      <h3>What the judges should look at</h3>
+      <ul>
+        <li><b>Typed boundaries</b> — <code>orchestrator/schemas.py</code> — every stage has a Pydantic model, which is why the pipeline is inspectable.</li>
+        <li><b>Critic penalty heuristic</b> — <code>orchestrator/brain.py → critic()</code> — shallow-prompt defense that prevents a well-shaped bundle from masking a vague idea.</li>
+        <li><b>Revision loop</b> — <code>orchestrator/main.py → _run_pipeline()</code> — the re-runs with critic fixes injected are the core learning loop.</li>
+        <li><b>Scored memory</b> — <code>orchestrator/memory.py → retrieve()</code> — tag overlap × type weight + priority/confidence/severity bonuses, per-category caps.</li>
+        <li><b>Pluggable workers</b> — <code>workers/*/main.py</code> — shape-correct stubs; swap to real Manus/OpenClaw by changing two env vars.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span>Val OS · Straight Up! Hackathon · Ant International Foundation · Track 5</span>
+    <span>From Prompt User to System Architect</span>
+  </footer>
+
+</div>
+</body>
+</html>

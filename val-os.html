@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Val OS — judgment-first founder operating system</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-2: #101318;
+    --panel: #141820;
+    --panel-2: #181d26;
+    --edge: #252b36;
+    --edge-2: #2e3543;
+    --ink: #e8ecf1;
+    --ink-mute: #8a94a4;
+    --ink-dim: #5f6a7a;
+    --accent: #7dd3fc;
+    --accent-2: #60a5fa;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5; }
+  a { color: var(--accent); }
+  button { cursor: pointer; font: inherit; }
+  input, textarea, select { font: inherit; color: inherit; }
+  .app { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: var(--bg-2); border-bottom: 1px solid var(--edge);
+    flex-wrap: wrap;
+  }
+  header .brand { font-weight: 700; letter-spacing: 0.3px; }
+  header .brand span { color: var(--accent); }
+  header .tag { color: var(--ink-mute); font-size: 12px; }
+  header .spacer { flex: 1; }
+  header .toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-mute); padding: 4px 8px; background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; }
+  header .toggle input { accent-color: var(--accent-2); }
+  header .field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-mute); }
+  header .field input, header .field select {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 4px 8px; color: var(--ink);
+  }
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr 380px;
+    gap: 12px;
+    padding: 12px;
+    min-height: 0;
+  }
+  .panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; min-height: 0; }
+  .panel h3 { margin: 0 0 8px 0; font-size: 12px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--ink-mute); }
+  .panel .sub { font-size: 11px; color: var(--ink-dim); margin-bottom: 8px; }
+  textarea { width: 100%; background: var(--bg-2); border: 1px solid var(--edge); border-radius: 6px; color: var(--ink); padding: 8px; font-family: var(--mono); font-size: 12.5px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn { background: var(--panel-2); color: var(--ink); border: 1px solid var(--edge-2); border-radius: 6px; padding: 6px 10px; font-size: 12.5px; }
+  .btn:hover { background: var(--edge); }
+  .btn.primary { background: var(--accent-2); color: #0b1022; border-color: transparent; font-weight: 600; }
+  .btn.primary:hover { background: #8fbcff; }
+  .btn.warn { background: #3a2e17; color: var(--warn); border-color: #4b3a1e; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+  .metric { background: var(--bg-2); border: 1px solid var(--edge); border-radius: 6px; padding: 6px 8px; }
+  .metric .k { font-size: 10px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .metric .v { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .pipeline { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; overflow-y: auto; }
+  .stage { display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg-2); border: 1px solid var(--edge); border-radius: 6px; cursor: pointer; }
+  .stage:hover { border-color: var(--edge-2); }
+  .stage .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-dim); }
+  .stage.pending .dot { background: var(--ink-dim); }
+  .stage.running .dot { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+  .stage.done .dot { background: var(--ok); }
+  .stage.error .dot { background: var(--err); }
+  .stage .title { color: var(--ink); font-weight: 500; }
+  .stage .title .n { color: var(--ink-dim); font-family: var(--mono); font-size: 11px; margin-right: 6px; }
+  .stage .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-mute); }
+  .stage.open { background: var(--panel-2); }
+  .stage-detail { display: none; padding: 8px 12px; background: var(--bg); border: 1px solid var(--edge); border-top: 0; border-radius: 0 0 6px 6px; margin-top: -7px; margin-bottom: 2px; }
+  .stage-detail.open { display: block; }
+  .stage-detail pre { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--ink); background: var(--bg-2); border: 1px solid var(--edge); border-radius: 4px; padding: 8px; overflow: auto; max-height: 320px; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--edge); margin-bottom: 8px; flex-wrap: wrap; }
+  .tabs button { background: transparent; border: 0; color: var(--ink-mute); padding: 6px 10px; font-size: 12px; border-bottom: 2px solid transparent; }
+  .tabs button:hover { color: var(--ink); }
+  .tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+  .mem-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 280px; }
+  .mem-item { padding: 6px 8px; background: var(--bg-2); border: 1px solid var(--edge); border-radius: 4px; }
+  .mem-item.hit { border-color: var(--accent); }
+  .mem-item .t { font-size: 12px; color: var(--ink); font-weight: 500; }
+  .mem-item .c { font-size: 11px; color: var(--ink-mute); margin-top: 2px; }
+  .mem-item .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+  .mem-item .tags span { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); background: var(--panel); padding: 1px 6px; border-radius: 3px; }
+  .mem-item .score { float: right; font-family: var(--mono); font-size: 10px; color: var(--accent); }
+
+  .critic-panel { background: var(--bg-2); border: 1px solid var(--edge); border-radius: 6px; padding: 10px; margin-top: 8px; }
+  .critic-badge { display: inline-block; padding: 2px 8px; font-family: var(--mono); font-size: 11px; border-radius: 4px; text-transform: uppercase; }
+  .critic-badge.pending { background: var(--panel); color: var(--ink-dim); }
+  .critic-badge.approve { background: #0c3828; color: var(--ok); }
+  .critic-badge.revise { background: #3a2e17; color: var(--warn); }
+  .critic-badge.reject { background: #3b1616; color: var(--err); }
+  .critic-score { font-family: var(--mono); color: var(--ink-mute); font-size: 11px; margin-left: 6px; }
+  .critic-body { font-size: 12px; color: var(--ink); margin-top: 6px; }
+  .critic-body ul { margin: 4px 0; padding-left: 18px; }
+  .critic-body li { margin: 2px 0; }
+  .critic-body .fixes { color: var(--accent); }
+  .critic-body .failures { color: var(--warn); }
+  .critic-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+  .bundle-body { overflow-y: auto; max-height: 48vh; }
+  .bundle-body pre { font-family: var(--mono); font-size: 11.5px; background: var(--bg-2); border: 1px solid var(--edge); border-radius: 4px; padding: 8px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .bundle-body h4 { margin: 6px 0 4px; font-size: 12px; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.5px; }
+  .bundle-body ul { margin: 4px 0 8px; padding-left: 18px; }
+
+  .status-bar { display: flex; gap: 12px; padding: 6px 16px; background: var(--bg-2); border-top: 1px solid var(--edge); font-family: var(--mono); font-size: 11px; color: var(--ink-mute); }
+
+  @media (max-width: 1200px) {
+    main { grid-template-columns: 280px 1fr 340px; }
+  }
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">Val <span>OS</span></div>
+    <div class="tag">judgment-first founder operating system</div>
+    <div class="spacer"></div>
+
+    <label class="toggle" title="Use the local judgment engine (no API calls)">
+      <input id="demoToggle" type="checkbox" checked />
+      demo
+    </label>
+    <label class="toggle" title="Call the FastAPI orchestrator at localhost:8080 (overrides demo/api)">
+      <input id="backendToggle" type="checkbox" />
+      backend
+    </label>
+    <label class="toggle" title="If critic returns 'revise', automatically re-run stages with fixes applied">
+      <input id="autoReviseToggle" type="checkbox" checked />
+      auto-revise
+    </label>
+
+    <div id="keyWrap" class="field" style="display:none;">
+      <span>api key</span>
+      <input id="apiKey" type="password" placeholder="sk-ant-..." style="width: 180px;" />
+    </div>
+    <div id="modelWrap" class="field" style="display:none;">
+      <span>model</span>
+      <select id="modelSel">
+        <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+        <option value="claude-opus-4-5">claude-opus-4-5</option>
+        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+      </select>
+    </div>
+    <div id="backendWrap" class="field" style="display:none;">
+      <span>orchestrator</span>
+      <input id="backendUrl" value="http://localhost:8080" style="width: 180px;" />
+    </div>
+  </header>
+
+  <main>
+    <!-- LEFT: intake + memory -->
+    <section class="panel">
+      <h3>intake</h3>
+      <div class="sub">founder prompt → structured planning bundle</div>
+      <textarea id="rawPrompt" rows="5" placeholder="Describe the thing you want to build."></textarea>
+      <textarea id="ctx" rows="2" placeholder="Optional context (audience, constraints, references)" style="margin-top:6px;"></textarea>
+      <div class="row" style="margin-top: 8px;">
+        <button id="runBtn" class="btn primary">Run pipeline</button>
+        <button id="seedBtn" class="btn">Seed meta-prompt</button>
+        <button id="clearPromptBtn" class="btn">Clear prompt</button>
+        <button id="clearBtn" class="btn">Reset run</button>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><div class="k">run id</div><div class="v" id="m-id">—</div></div>
+        <div class="metric"><div class="k">latency</div><div class="v" id="m-rt">—</div></div>
+        <div class="metric"><div class="k">stages done</div><div class="v" id="m-sd">0 / 11</div></div>
+        <div class="metric"><div class="k">mode</div><div class="v" id="m-mode">demo · local</div></div>
+        <div class="metric"><div class="k">revisions</div><div class="v" id="m-rev">0 / 2</div></div>
+        <div class="metric"><div class="k">critic</div><div class="v" id="m-critic">—</div></div>
+        <div class="metric" style="grid-column: span 2;"><div class="k">started</div><div class="v" id="m-ts">—</div></div>
+      </div>
+
+      <h3 style="margin-top:12px;">typed memory</h3>
+      <div class="tabs" id="memTabs"></div>
+      <div class="mem-list" id="memList"></div>
+    </section>
+
+    <!-- CENTER: pipeline -->
+    <section class="panel">
+      <h3>pipeline</h3>
+      <div class="sub">11 stages · typed JSON at every boundary · critic gates output</div>
+      <div class="pipeline" id="pipeline"></div>
+
+      <h3 style="margin-top:12px;">critic</h3>
+      <div class="critic-panel">
+        <span id="criticBadge" class="critic-badge pending">pending</span>
+        <span id="criticTitle" style="margin-left:6px;">Waiting for pipeline</span>
+        <span id="criticScore" class="critic-score"></span>
+        <div id="criticSub" class="sub" style="margin-top:4px;"></div>
+        <div id="criticBody" class="critic-body"></div>
+        <div class="critic-actions" id="criticActions"></div>
+      </div>
+    </section>
+
+    <!-- RIGHT: output bundle -->
+    <section class="panel">
+      <h3>output bundle</h3>
+      <div class="tabs" id="bundleTabs">
+        <button data-tab="prd" class="active">PRD</button>
+        <button data-tab="system">System</button>
+        <button data-tab="routing">Routing</button>
+        <button data-tab="workers">Workers</button>
+        <button data-tab="qa">QA</button>
+        <button data-tab="deploy">Deploy</button>
+        <button data-tab="memwb">Memwb</button>
+      </div>
+      <div id="bundleBody" class="bundle-body">
+        <div style="color:var(--ink-mute);padding:12px 0;">Run the pipeline to see the bundle.</div>
+      </div>
+    </section>
+  </main>
+
+  <div class="status-bar">
+    <span>Val OS v0.2 · judgment-first · critic-gated · typed memory</span>
+    <span class="spacer" style="flex:1;"></span>
+    <span id="sb-mode">demo · local</span>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   Val OS — self-contained prototype
+   - Demo mode (default): local judgment engine, no network.
+   - Real API mode: direct browser Anthropic calls.
+   - Backend mode: POST to FastAPI orchestrator (val-os-backend/).
+   - Revision loop: if critic returns 'revise', re-run scope→...→critic→output
+     with fixes injected into ctx. Auto or manual, capped at 2 revisions.
+   ========================================================================= */
+
+const SEED_PROMPT = "Build me a founder operating system that turns prompts into product specs and execution plans.";
+
+const STAGES = [
+  { id: "intake",    n: "01", title: "Prompt Intake" },
+  { id: "memory",    n: "02", title: "Memory Retrieval" },
+  { id: "intent",    n: "03", title: "Intent Interpreter" },
+  { id: "reframe",   n: "04", title: "Problem Reframer" },
+  { id: "scope",     n: "05", title: "Scope Engine" },
+  { id: "architect", n: "06", title: "Architecture Engine" },
+  { id: "research",  n: "07", title: "Research Planner" },
+  { id: "execution", n: "08", title: "Execution Planner" },
+  { id: "router",    n: "09", title: "Router" },
+  { id: "critic",    n: "10", title: "Critic" },
+  { id: "output",    n: "11", title: "Output + Memory Writeback" },
+];
+
+/* ---------- Typed memory seed (26 entries, 6 tables) ---------- */
+const MEMORY = {
+  founder_principles: [
+    { title: "Judgment first, execution second", content: "Never let worker execution run ahead of wedge/scope/architecture judgment.", tags: ["governance","planning","core"], priority: 1 },
+    { title: "Typed JSON at every module boundary", content: "Every stage emits typed JSON that the next stage consumes. No free-form blobs.", tags: ["architecture","schema","core"], priority: 1 },
+    { title: "Prefer narrow wedge over broad MVP", content: "A demo that proves one cut of the value prop beats a half-working general tool.", tags: ["scope","wedge","mvp"], priority: 2 },
+    { title: "Mock what you can, keep real what you must", content: "Cleanly separate mocked integrations from real ones in scope.mocked_vs_real.", tags: ["scope","mvp","integrations"], priority: 2 },
+    { title: "Critic gate before assembling output", content: "No final output bundle assembles until critic returns approve.", tags: ["quality","governance","critic"], priority: 1 },
+    { title: "Memory is typed tables, not a vector dump", content: "Memory retrieved by tag + type + priority, not nearest-neighbor embedding search.", tags: ["memory","architecture","core"], priority: 1 },
+  ],
+  product_preferences: [
+    { title: "Dark UI with monospace for structured data", content: "Use dark theme; render JSON in monospace.", tags: ["ui","design","dx"], confidence: 0.9 },
+    { title: "Visible system map over hidden orchestration", content: "Always show the 11-stage pipeline; never hide routing or critic.", tags: ["ui","transparency","dx"], confidence: 0.85 },
+    { title: "FastAPI + Postgres + Next.js default stack", content: "Default backend FastAPI + Postgres, frontend Next.js.", tags: ["stack","default"], confidence: 0.8 },
+    { title: "Structured logs with stage + latency", content: "Every stage logs stage id, run id, latency, output shape.", tags: ["observability","logs"], confidence: 0.85 },
+    { title: "Editable routing decisions", content: "User should be able to override a routing decision before dispatch.", tags: ["ui","routing","control"], confidence: 0.75 },
+  ],
+  routing_rules: [
+    { title: "Judgment to val_clone_internal", content: "Wedge, scope cuts, architecture trade-offs → val_clone_internal.", tags: ["routing","judgment"], route_to: "val_clone_internal", confidence: 0.95 },
+    { title: "External discovery to Manus", content: "Competitor catalogs, public docs, web research → Manus.", tags: ["routing","research"], route_to: "manus", confidence: 0.92 },
+    { title: "Code edits to code_builder", content: "Multi-file real codebase changes → code_builder.", tags: ["routing","execution","code"], route_to: "code_builder", confidence: 0.88 },
+    { title: "Operational tasks to OpenClaw", content: "Approved task runners, non-code execution → OpenClaw.", tags: ["routing","execution","ops"], route_to: "openclaw", confidence: 0.9 },
+    { title: "Quality gates to Critic", content: "Bundle review, rejection, revision → Critic.", tags: ["routing","quality"], route_to: "critic", confidence: 0.94 },
+    { title: "Durable writes to Memory Manager", content: "Should_write with confidence ≥ 0.75 → Memory Manager.", tags: ["routing","memory"], route_to: "memory_manager", confidence: 0.9 },
+  ],
+  approved_patterns: [
+    { title: "Judgment-first planning loop", content: "Intake → Intent → Reframe → Scope → Architecture → Research/Execution → Router → Critic → Output.", tags: ["core_loop","planning","governance"], confidence: 0.92 },
+    { title: "Revision-on-revise policy", content: "When critic returns revise, re-run scope/arch/research/exec/router with fixes injected; cap 2 per run.", tags: ["quality","revision"], confidence: 0.85 },
+    { title: "Tag-scored memory retrieval", content: "score = tag_overlap * type_weight + priority + recency. Cap per category.", tags: ["memory","retrieval"], confidence: 0.88 },
+  ],
+  failure_lessons: [
+    { title: "Routed judgment to Manus", content: "A wedge question sent to Manus returned shallow web summaries instead of a sharp decision.", tags: ["routing","judgment","regression"], severity: 2 },
+    { title: "Critic bypassed after timeout", content: "Critic timed out; pipeline assembled output anyway and shipped a shallow bundle.", tags: ["quality","governance","timeout"], severity: 1 },
+    { title: "Memory contaminated with per-run stack choices", content: "Wrote 'use Supabase' as a preference after a single project chose it.", tags: ["memory","writeback","governance"], severity: 3 },
+    { title: "Over-scoped MVP must-have", content: "Listed 12 must-have items for a single-week MVP. Everything slipped.", tags: ["scope","mvp"], severity: 2 },
+    { title: "JSON parse failure silently swallowed", content: "Stage returned prose with fences; next stage got empty object and continued.", tags: ["schema","robustness"], severity: 1 },
+  ],
+  project_state: [
+    { title: "Val OS MVP active", content: "Live prototype + backend scaffold. Brain + Critic + typed memory + revision loop + worker stubs.", tags: ["val_os","state","mvp"] },
+  ],
+};
+
+const TYPE_WEIGHT = {
+  founder_principles: 1.10, routing_rules: 1.00, approved_patterns: 0.95,
+  product_preferences: 0.90, failure_lessons: 1.05, project_state: 0.85,
+};
+const CAPS = {
+  founder_principles: 5, routing_rules: 6, approved_patterns: 3,
+  product_preferences: 5, failure_lessons: 4, project_state: 1,
+};
+const STOP = new Set("a an the and or to for of in on with by me my our from that which is are be being it its as so into onto up down just how what why do we build make".split(" "));
+
+/* ---------- State ---------- */
+let BUNDLE = {};
+let STAGE_STATES = {}; // id -> { state, output, ms, error }
+let REVISIONS = 0;
+const MAX_REVISIONS = 2;
+let DEMO_MODE = true;
+let BACKEND_MODE = false;
+let activeTab = "prd";
+let activeMemTab = "all";
+let retrievedIds = new Set();
+
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const MAX_TOKENS = 2000;
+
+/* ---------- Helpers ---------- */
+const el = (id) => document.getElementById(id);
+const pretty = (o) => JSON.stringify(o, null, 2);
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
+function tokenize(s) {
+  return (String(s||"").toLowerCase().match(/[a-z0-9_]+/g) || [])
+    .filter(t => !STOP.has(t) && t.length > 2);
+}
+function nowIso() { return new Date().toISOString(); }
+function uid() { return "r_" + Math.random().toString(36).slice(2, 10); }
+
+/* ---------- Memory retrieval ---------- */
+function retrieveMemory(prompt, context) {
+  const tokens = new Set(tokenize(prompt + " " + (context||"")));
+  const rows = [];
+  const categories = Object.keys(MEMORY);
+  for (const cat of categories) {
+    const scored = [];
+    for (const row of MEMORY[cat]) {
+      const overlap = (row.tags||[]).reduce((n, tag) => {
+        for (const part of String(tag).toLowerCase().replace(/_/g, " ").split(/\s+/)) {
+          if (tokens.has(part)) n++;
+        }
+        return n;
+      }, 0);
+      if (overlap === 0 && cat !== "founder_principles") continue;
+      let score = overlap * TYPE_WEIGHT[cat];
+      if (row.priority != null) score += (6 - row.priority) * 0.1;
+      if (row.confidence != null) score += row.confidence * 0.15;
+      if (cat === "failure_lessons" && row.severity != null) score += (6 - row.severity) * 0.05;
+      scored.push({ row, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    for (const { row, score } of scored.slice(0, CAPS[cat])) {
+      rows.push({ memory_type: cat, id: `${cat}:${row.title}`, title: row.title, content: row.content, tags: row.tags||[], score: +score.toFixed(3) });
+    }
+  }
+  return { rows };
+}
+
+/* ---------- Pipeline rendering ---------- */
+function renderPipeline() {
+  const p = el("pipeline");
+  STAGE_STATES = {};
+  p.innerHTML = STAGES.map(s =>
+    `<div class="stage pending" data-id="${s.id}">
+      <div class="dot"></div>
+      <div class="title"><span class="n">${s.n}</span>${s.title}</div>
+      <div class="meta" data-meta="${s.id}">—</div>
+    </div>
+    <div class="stage-detail" data-detail="${s.id}"><pre>(no output yet)</pre></div>`
+  ).join("");
+  p.querySelectorAll(".stage").forEach(node => {
+    node.addEventListener("click", () => {
+      const id = node.dataset.id;
+      const det = p.querySelector(`[data-detail="${id}"]`);
+      const open = det.classList.toggle("open");
+      node.classList.toggle("open", open);
+    });
+  });
+}
+
+function setStageState(id, state, extra = {}) {
+  const p = el("pipeline");
+  const node = p.querySelector(`.stage[data-id="${id}"]`);
+  if (!node) return;
+  node.classList.remove("pending", "running", "done", "error");
+  node.classList.add(state);
+  const meta = p.querySelector(`[data-meta="${id}"]`);
+  if (state === "running") meta.textContent = "running…";
+  else if (state === "done") meta.textContent = `${extra.ms||0}ms`;
+  else if (state === "error") meta.textContent = "error";
+  const det = p.querySelector(`[data-detail="${id}"] pre`);
+  if (state === "done" && det) det.textContent = pretty(extra.output);
+  if (state === "error" && det) det.textContent = extra.error || "error";
+  STAGE_STATES[id] = { state, ...extra };
+  const done = Object.values(STAGE_STATES).filter(s => s.state === "done").length;
+  el("m-sd").textContent = `${done} / 11`;
+}
+
+/* ---------- Demo judgment engine (mirrors server brain.py) ---------- */
+const DEMO = (() => {
+  const delay = (ms = 220) => new Promise(r => setTimeout(r, ms + Math.random() * 250));
+  function titleOf(raw) {
+    const m = raw.match(/\b(?:build|make|create|design|develop|ship|launch)\s+(?:me\s+)?(?:a|an|the)?\s*([^.!?\n]+?)(?:\s+(?:that|which|for|to|so|from)\b|[.!?\n]|$)/i);
+    return (m ? m[1] : raw.slice(0, 80)).trim().replace(/\s+/g, " ");
+  }
+  function categorize(raw, ctx) {
+    const t = new Set(tokenize(raw + " " + (ctx||"")));
+    const has = (...ks) => ks.some(k => t.has(k));
+    if (has("founder","os","operating","orchestrator","judgment","specs","spec","planning","wedge")) return "founder_os";
+    if (has("dashboard","analytics","metric","metrics","kpi","report","reports","chart","visualize")) return "dashboard";
+    if (has("sales","crm","deal","pipeline","outreach","lead","prospect")) return "sales";
+    if (has("support","ticket","helpdesk","customer")) return "support";
+    if (has("workflow","automation","automate","agent","agents")) return "automation";
+    return "generic";
+  }
+
+  const FOUNDER_OS = {
+    core_goal: "turn raw founder prompts into production-grade specs, architecture, routing, and execution plans through a judgment-first pipeline",
+    user_type: "startup founders and 0→1 builders",
+    domain: "founder tooling / AI orchestration",
+    build_category: "platform / operating system",
+    ambiguities: ["execution autonomy level for v1","which worker surfaces are wired","memory persistence target","whether critic can hard-block execution"],
+    assumptions: ["single-user v1","typed JSON at every module boundary","memory as typed tables not vector blob"],
+    problem_statement: "founders lose weeks translating vague prompts into production-grade plans; existing tools either act as personality chatbots or execute too early without wedge/scope discipline",
+    wedge: "prompt → structured founder-grade plan, with a critic gate before any execution",
+    success_definition: "user enters a vague build prompt and receives typed intent, reframed problem, scoped MVP, architecture, routing plan, execution queue, critic verdict, and output bundle in a single run",
+    non_goals: ["full autonomous build loop","multi-user collaboration","production deployment engine in v1","IDE execution in v1"],
+    must_have: ["prompt-to-spec pipeline","problem reframing","MVP scoping","architecture generation","research + execution task generation","router with confidence + fallback","critic quality gate","typed memory retrieval","output bundle"],
+    should_have: ["memory writeback recommendations","editable routing decisions","revision loop after critic revise"],
+    defer: ["autonomous iteration loop","multi-project graph memory","real worker execution feedback","multi-user collaboration"],
+    mock_ok: ["Manus connector","OpenClaw connector","actual execution results","deployment logs"],
+    must_be_real: ["planning pipeline outputs","routing decisions","memory retrieval","critic evaluation","typed output bundle"],
+    modules: ["Prompt Intake","Intent Interpreter","Problem Reframer","Scope Engine","Architecture Engine","Research Planner","Execution Planner","Router","Critic","Output Generator","Memory Manager"],
+    module_resp: {
+      "Prompt Intake": "normalize raw prompt, assign request id, detect request type",
+      "Intent Interpreter": "convert raw prompt into structured intent with ambiguities + assumptions",
+      "Problem Reframer": "sharpen into problem / wedge / success / non-goals",
+      "Scope Engine": "produce must-have, should-have, defer, mock_ok, must_be_real",
+      "Architecture Engine": "modules, data flow, dependencies, failure points, memory vs runtime split",
+      "Research Planner": "emit specific, deliverable-keyed Manus research tasks",
+      "Execution Planner": "emit typed execution queue with owner_type, deps, acceptance criteria",
+      "Router": "route each work item with reason, confidence, fallback",
+      "Critic": "return approve | revise | reject + failures + fixes + strongest_part",
+      "Output Generator": "assemble founder-grade PRD + system spec + QA + deployment checklists",
+      "Memory Manager": "tag-scored retrieval; durable writeback recommendations only"
+    },
+    data_flow: ["raw_prompt → intake","intake + memory → intent","intent → reframed problem","reframed problem → scope","scope + reframed → architecture","architecture + scope → research plan","architecture + scope → execution plan","all prior → router","bundle → critic","critic approve → output generator","output → memory writeback recommendations"],
+    dependencies: ["LLM provider","Postgres (typed memory)","optional: Manus API","optional: OpenClaw shell"],
+    failure_points: ["prompt ambiguity","over-scoped MVP","bad routing decision","low-quality worker output","memory contamination","critic gate bypassed","JSON extraction failure"],
+    memory_vs_runtime: {
+      memory: ["founder_principles","routing_rules","approved_patterns","product_preferences","failure_lessons","project_state"],
+      runtime: ["current request_id","stage outputs in-flight","critic verdict for this run","per-run retrieved context block"]
+    },
+    research_seeds: [
+      ["catalogue 10 production-grade AI build-planning tools","know credible competitors so wedge is defensible","web/product","comparison table with core flow, strengths, weaknesses"],
+      ["collect module patterns used by prompt-to-spec systems","validate module boundary choices","docs/architecture","typed module-pattern summary"],
+      ["identify how competing tools separate judgment from execution","verify four-way role split","product analysis","routing taxonomy"],
+      ["survey typed-memory approaches in long-running agent systems","pick memory shape before writing schema","docs/papers","trade-off matrix with recommendation"],
+      ["find examples of critic patterns in agent pipelines","design a critic that rejects shallow output","repos/docs","critic-pattern catalog"],
+    ],
+    execution_seeds: [
+      ["Scaffold Next.js app shell with 11-stage pipeline UI","frontend",[],["app boots","theme configured","pipeline renders"],false],
+      ["Build FastAPI orchestrator with POST /plan endpoint","backend",["e1"],["accepts raw prompt","returns typed bundle","logs latency"],false],
+      ["Implement Postgres schemas for 6 typed memory tables","data",[],["tables created","seeds loaded","retrieval indexed"],false],
+      ["Wire intent/reframe/scope/architecture modules with strict JSON extraction","backend",["e2"],["shape-correct JSON","retry on malformed","per-module timeout"],false],
+      ["Implement router service with confidence + fallback","backend",["e4"],["routes emit confidence","<0.75 fallback to val_clone_internal"],false],
+      ["Implement critic service evaluating full bundle","backend",["e4"],["returns approve/revise/reject","surfaces failures + fixes"],false],
+      ["Stub Manus + OpenClaw connector services","backend",["e5"],["shape-correct fake responses","observable logs"],true],
+      ["Add memory retrieval + writeback recommendation endpoints","backend",["e3"],["tag-scored retrieval with caps","writeback recommends not commits"],false],
+    ],
+    qa: ["every stage returns typed JSON matching schema","critic rejects deliberately shallow prompt","memory retrieval surfaces right rows","routing emits confidence + fallback","malformed LLM output triggers retry","pipeline under 30s on standard prompt"],
+    deploy: ["env config for LLM key + model","Postgres migrations applied","seed memory loaded","rate-limit + timeout policies","structured logs for stage latency","error reporting wired","feature flag for demo vs real mode"],
+    critic_strong: "typed JSON at every module boundary with a real critic gate — judgment-first discipline is the moat",
+  };
+
+  function generic(raw, ctx) {
+    const t = titleOf(raw).toLowerCase();
+    return {
+      core_goal: `ship a working v1 of ${t} that proves a single user loop`,
+      user_type: "internal operators / early users",
+      domain: "general tooling",
+      build_category: "internal tool",
+      ambiguities: ["primary user not specified","data source not named","success metric unclear"],
+      assumptions: ["single-user v1","mocked external data ok","dark web UI"],
+      problem_statement: `user articulates a need around ${t} but the wedge, scope, and success metric aren't sharp`,
+      wedge: `one clearly useful slice of ${t} that a single user runs end-to-end`,
+      success_definition: "a realistic user reaches the main action in under 60s on a seeded demo",
+      non_goals: ["full platform generalization","multi-tenant admin in v1","enterprise SSO in v1"],
+      must_have: [`core user flow for ${t}`,"seeded data source","primary action","result view"],
+      should_have: ["saved state","shareable URL","light analytics"],
+      defer: ["admin console","billing","multi-tenant"],
+      mock_ok: ["external integrations","downstream write-backs"],
+      must_be_real: ["core user action","persistent state of a single run"],
+      modules: ["Frontend App","Frontend State","API Service","Data Store","Integration Stubs","Observability"],
+      module_resp: {
+        "Frontend App": "renders user flow and primary action",
+        "Frontend State": "holds run state and optimistic updates",
+        "API Service": "exposes typed endpoints for core action",
+        "Data Store": "persists a single run; seeded with mock data",
+        "Integration Stubs": "fake third-party calls with observable I/O",
+        "Observability": "structured logs and latency per request",
+      },
+      data_flow: ["user action → frontend","frontend → api","api → data store","api → integration stub","response → frontend"],
+      dependencies: ["web host","Postgres","LLM provider (optional)"],
+      failure_points: ["vague success metric","primary action not findable","integration stub diverges","state not persisted"],
+      memory_vs_runtime: { memory: ["product_preferences","approved_patterns"], runtime: ["current request id","seeded dataset"] },
+      research_seeds: [
+        [`catalogue 3-5 tools that solve ${t}`,"anchor wedge against credible alternatives","web/product","comparison table"],
+        [`identify one task users do most inside ${t}`,"shape primary action","user interviews","ranked task list"],
+        [`collect top 2 data sources for ${t}`,"decide mock vs real","docs","source table"],
+      ],
+      execution_seeds: [
+        ["Scaffold app shell with primary action on home screen","frontend",[],["app boots","primary action visible"],false],
+        ["Implement API endpoint for primary action","backend",["e1"],["returns typed response","logs latency"],false],
+        ["Seed data store with realistic rows","data",[],["10+ seeded rows","indexed on primary key"],false],
+        ["Wire frontend to API and persist a run","frontend",["e1","e2"],["submit → response","state persists"],false],
+        ["Instrument structured logs","observability",["e2"],["logs carry request id"],false],
+        ["Stub one external integration","backend",["e2"],["shape-correct fake","observable log"],true],
+      ],
+      qa: ["primary action under 3s on seed","malformed input rejected with typed error","frontend handles empty-state","logs include request id","no unhandled exception on happy path"],
+      deploy: ["env config loaded","database seeded","health check passes","structured logs exported","feature flag for demo vs real"],
+      critic_strong: "one clearly scoped user loop with typed JSON between frontend and backend",
+    };
+  }
+
+  function profile(raw, ctx) {
+    const cat = categorize(raw, ctx);
+    const p = cat === "founder_os" ? { ...FOUNDER_OS } : generic(raw, ctx);
+    p.__category = cat;
+    return p;
+  }
+
+  return {
+    profile, categorize,
+    async intent(raw, ctx) { await delay(); const p = profile(raw, ctx); return { core_goal: p.core_goal, user_type: p.user_type, domain: p.domain, build_category: p.build_category, ambiguities: p.ambiguities, assumptions: p.assumptions }; },
+    async reframe(raw, ctx) { await delay(); const p = profile(raw, ctx); return { problem_statement: p.problem_statement, wedge: p.wedge, success_definition: p.success_definition, non_goals: p.non_goals }; },
+    async scope(raw, ctx) { await delay(); const p = profile(raw, ctx); return { must_have: p.must_have, should_have: p.should_have, defer: p.defer, mock_ok: p.mock_ok, must_be_real: p.must_be_real }; },
+    async architect(raw, ctx) { await delay(); const p = profile(raw, ctx); return { system_modules: p.modules, module_responsibilities: p.module_resp, data_flow: p.data_flow, dependencies: p.dependencies, failure_points: p.failure_points, memory_vs_runtime: p.memory_vs_runtime }; },
+    async research(raw, ctx) { await delay(); const p = profile(raw, ctx); return { research_tasks: p.research_seeds.map((r, i) => ({ task_id: `r${i+1}`, objective: r[0], why_it_matters: r[1], source_type: r[2], deliverable: r[3] })) }; },
+    async execution(raw, ctx) { await delay(); const p = profile(raw, ctx); return { execution_tasks: p.execution_seeds.map((r, i) => ({ task_id: `e${i+1}`, title: r[0], owner_type: r[1], depends_on: r[2]||[], acceptance_criteria: r[3]||[], mockable: !!r[4] })) }; },
+    async router(scope, arch, research, execution) {
+      await delay();
+      const routes = [];
+      for (const r of (research.research_tasks||[])) {
+        routes.push({ work_item: r.objective, route_to: "manus", reason: "external discovery task", confidence: 0.93, fallback: null });
+      }
+      for (const e of (execution.execution_tasks||[])) {
+        const codey = /scaffold|implement|wire|build|endpoint|schema|integration/i.test(e.title);
+        const routeTo = codey ? "code_builder" : "openclaw";
+        const conf = codey ? 0.9 : 0.92;
+        routes.push({ work_item: e.title, route_to: routeTo, reason: codey ? "multi-file code change" : "operational execution", confidence: conf, fallback: conf < 0.75 ? "val_clone_internal" : null });
+      }
+      routes.push({ work_item: "define MVP wedge", route_to: "val_clone_internal", reason: "judgment-heavy decision", confidence: 0.97, fallback: null });
+      routes.push({ work_item: "stress-test architecture", route_to: "critic", reason: "quality gate", confidence: 0.94, fallback: null });
+      routes.push({ work_item: "write durable lesson to memory", route_to: "memory_manager", reason: "durable continuity", confidence: 0.9, fallback: null });
+      return { routes };
+    },
+    async critic(raw, ctx, bundle) {
+      await delay(280);
+      const p = profile(raw, ctx);
+      const b = bundle || {};
+      let score = 0.55;
+      if ((b.architecture?.system_modules||[]).length >= 6) score += 0.08;
+      const mh = (b.scope?.must_have||[]).length;
+      if (mh >= 3 && mh <= 7) score += 0.10;
+      if ((b.architecture?.failure_points||[]).length >= 4) score += 0.05;
+      if ((b.execution?.execution_tasks||[]).length >= 5) score += 0.06;
+      if ((b.research?.research_tasks||[]).length >= 3) score += 0.04;
+      if ((b.reframe?.non_goals||[]).length >= 2) score += 0.03;
+      if ((b.router?.routes||[]).some(r => r.route_to === "code_builder")) score += 0.02;
+
+      // Prompt-level penalties.
+      const signal = tokenize(raw);
+      if (signal.length < 4) score -= 0.20;
+      else if (signal.length < 7) score -= 0.10;
+      if (p.__category === "generic") score -= 0.15;
+      score = Math.max(0, Math.min(0.96, score));
+
+      const failures = [], fixes = [];
+      if (mh > 7) { failures.push("must-have is too broad for an MVP"); fixes.push("cut must-have to 4-6 items"); }
+      if (!(b.architecture?.failure_points||[]).length) { failures.push("no explicit failure states"); fixes.push("list failure points + detection"); }
+      if (p.__category === "generic") { failures.push("domain not clearly identified from prompt"); fixes.push("add 1-2 context lines to tighten intent"); }
+      if (signal.length < 4) { failures.push("prompt is too short to plan against"); fixes.push("describe product + user + success"); }
+      if (!failures.length) { failures.push("memory writeback criteria could be tightened"); fixes.push("add confidence threshold before writing memory"); }
+      const status = score >= 0.82 ? "approve" : score >= 0.60 ? "revise" : "reject";
+      return { status, score: +score.toFixed(2), failures, fixes, strongest_part: p.critic_strong };
+    },
+    async output(raw, ctx, intent, reframe, scope, arch) {
+      await delay(320);
+      const p = profile(raw, ctx);
+      return {
+        prd: {
+          product_definition: `MVP that solves: ${reframe.problem_statement}`,
+          target_user: intent.user_type, wedge: reframe.wedge,
+          success_criteria: [reframe.success_definition, ...(scope.must_have||[]).slice(0, 3)],
+          non_goals: reframe.non_goals, mvp_feature_set: scope.must_have,
+          mocked_vs_real: { mocked: scope.mock_ok, real: scope.must_be_real },
+        },
+        system_spec: {
+          modules: arch.system_modules, data_flow: arch.data_flow,
+          dependencies: arch.dependencies, failure_states: arch.failure_points,
+        },
+        qa_checklist: p.qa, deployment_checklist: p.deploy,
+      };
+    },
+    async memwb(critic) {
+      await delay(200);
+      const recs = [];
+      if (critic.status === "approve") {
+        recs.push({ should_write: true, memory_type: "approved_patterns",
+          title: "Judgment-first planning loop with typed module boundaries",
+          content: "Intent → Reframe → Scope → Arch → Research/Exec → Router → Critic → Output. Typed JSON at boundaries.",
+          tags: ["core_loop","planning","governance"], confidence: 0.9,
+          justification: "Loop held end-to-end; aligns with founder principles." });
+      }
+      if (critic.failures?.length) {
+        recs.push({ should_write: true, memory_type: "failure_lessons",
+          title: critic.failures[0],
+          content: `Observed: ${critic.failures[0]}. Fix: ${critic.fixes?.[0]||"review scope + failure states."}`,
+          tags: ["critic","quality"], confidence: 0.75,
+          justification: "Critic surfaced a real weakness worth remembering." });
+      }
+      recs.push({ should_write: false, memory_type: "product_preferences",
+        title: "Defer: personalize stack per run",
+        content: "Do not store per-run stack choices unless repeated across 3+ projects.",
+        tags: ["governance","memory"], confidence: 0.6,
+        justification: "Transient details pollute memory." });
+      return { recommendations: recs };
+    }
+  };
+})();
+
+/* ---------- Real Anthropic API (optional) ---------- */
+async function callClaude({ system, user }) {
+  const model = el("modelSel").value;
+  const key = el("apiKey").value.trim();
+  if (!key) throw new Error("API key required for real API mode");
+  const res = await fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model, max_tokens: MAX_TOKENS, system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const text = (data.content || []).map(c => c.text || "").join("\n");
+  const m = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/) || [null, text];
+  return JSON.parse(m[1].trim());
+}
+
+/* ---------- Backend mode: call orchestrator ---------- */
+async function callBackendPlan(rawPrompt, context, autoRevise) {
+  const base = el("backendUrl").value.replace(/\/+$/, "");
+  const res = await fetch(base + "/plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_prompt: rawPrompt, context: context || null, auto_revise: autoRevise, dispatch_workers: true }),
+  });
+  if (!res.ok) throw new Error(`Backend ${res.status}: ${await res.text()}`);
+  return await res.json();
+}
+
+/* ---------- Critic rendering ---------- */
+function renderCritic(critic) {
+  const badge = el("criticBadge");
+  badge.className = `critic-badge ${critic?.status || "pending"}`;
+  badge.textContent = critic?.status || "pending";
+  el("criticTitle").textContent = critic?.status ? `Critic: ${critic.status}` : "Waiting for pipeline";
+  el("criticScore").textContent = critic?.score != null ? `score ${critic.score}` : "";
+  el("m-critic").textContent = critic?.status ? `${critic.status} · ${critic.score}` : "—";
+  el("criticSub").textContent = critic?.strongest_part ? `Strongest: ${critic.strongest_part}` : "";
+  const body = el("criticBody");
+  if (critic) {
+    body.innerHTML = `
+      ${critic.failures?.length ? `<div class="failures">Failures:<ul>${critic.failures.map(f=>`<li>${esc(f)}</li>`).join("")}</ul></div>` : ""}
+      ${critic.fixes?.length ? `<div class="fixes">Fixes:<ul>${critic.fixes.map(f=>`<li>${esc(f)}</li>`).join("")}</ul></div>` : ""}
+    `;
+  } else { body.innerHTML = ""; }
+
+  const actions = el("criticActions");
+  actions.innerHTML = "";
+  if (critic?.status === "revise" && REVISIONS < MAX_REVISIONS) {
+    const b = document.createElement("button");
+    b.className = "btn warn"; b.textContent = `Revise & re-run (${REVISIONS + 1}/${MAX_REVISIONS})`;
+    b.addEventListener("click", reviseAndRerun);
+    actions.appendChild(b);
+  }
+  if (critic?.status === "reject") {
+    const note = document.createElement("div");
+    note.style.color = "var(--err)"; note.style.fontSize = "11.5px";
+    note.textContent = "Critic rejected. Tighten the prompt: describe the user, the action, and the success metric.";
+    actions.appendChild(note);
+  }
+}
+
+function resetCritic() {
+  REVISIONS = 0;
+  el("m-rev").textContent = `0 / ${MAX_REVISIONS}`;
+  renderCritic(null);
+}
+
+/* ---------- Memory view ---------- */
+function renderMemTabs() {
+  const tabs = ["all", ...Object.keys(MEMORY)];
+  el("memTabs").innerHTML = tabs.map(t =>
+    `<button data-memtab="${t}" class="${t===activeMemTab?"active":""}">${t}</button>`
+  ).join("");
+  el("memTabs").querySelectorAll("button").forEach(b =>
+    b.addEventListener("click", () => { activeMemTab = b.dataset.memtab; renderMemTabs(); renderMemList(); })
+  );
+}
+function renderMemList() {
+  const rows = [];
+  const cats = activeMemTab === "all" ? Object.keys(MEMORY) : [activeMemTab];
+  for (const cat of cats) {
+    for (const row of MEMORY[cat]) {
+      const id = `${cat}:${row.title}`;
+      rows.push({ cat, id, ...row });
+    }
+  }
+  el("memList").innerHTML = rows.map(r => `
+    <div class="mem-item ${retrievedIds.has(r.id) ? "hit" : ""}">
+      <div class="t">${esc(r.title)} ${retrievedIds.has(r.id) ? '<span class="score">retrieved</span>' : ""}</div>
+      <div class="c">${esc(r.content)}</div>
+      <div class="tags">${(r.tags||[]).map(t=>`<span>${esc(t)}</span>`).join("")}<span style="color:var(--ink-dim);">${r.cat}</span></div>
+    </div>
+  `).join("");
+}
+
+/* ---------- Bundle rendering ---------- */
+function paintBundle() {
+  const body = el("bundleBody");
+  if (Object.keys(BUNDLE).length === 0) { body.innerHTML = '<div style="color:var(--ink-mute);padding:12px 0;">Run the pipeline to see the bundle.</div>'; return; }
+  el("bundleTabs").querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.tab === activeTab));
+  let html = "";
+  const o = BUNDLE.output || {};
+  if (activeTab === "prd") {
+    html = `<pre>${esc(pretty(o.prd || {}))}</pre>`;
+  } else if (activeTab === "system") {
+    html = `<pre>${esc(pretty(o.system_spec || {}))}</pre>`;
+  } else if (activeTab === "routing") {
+    html = `<pre>${esc(pretty(BUNDLE.routing || {}))}</pre>`;
+  } else if (activeTab === "workers") {
+    const wf = BUNDLE.worker_feedback || [];
+    html = wf.length
+      ? `<pre>${esc(pretty(wf))}</pre>`
+      : `<div style="color:var(--ink-mute);padding:8px 0;">No worker feedback. Workers dispatch in backend mode (or when wired locally).</div>`;
+  } else if (activeTab === "qa") {
+    html = `<h4>QA checklist</h4><ul>${(o.qa_checklist||[]).map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`;
+  } else if (activeTab === "deploy") {
+    html = `<h4>Deployment checklist</h4><ul>${(o.deployment_checklist||[]).map(q=>`<li>${esc(q)}</li>`).join("")}</ul>`;
+  } else if (activeTab === "memwb") {
+    html = `<pre>${esc(pretty(BUNDLE.memory_writeback || {}))}</pre>`;
+  }
+  body.innerHTML = html;
+}
+
+/* ---------- Stage runner ---------- */
+async function runStage(id, demoFn, apiFn) {
+  setStageState(id, "running");
+  const t0 = Date.now();
+  try {
+    const out = DEMO_MODE ? await demoFn() : await apiFn();
+    setStageState(id, "done", { ms: Date.now() - t0, output: out });
+    return out;
+  } catch (e) {
+    setStageState(id, "error", { ms: Date.now() - t0, error: String(e.message || e) });
+    throw e;
+  }
+}
+
+/* ---------- Pipeline orchestration ---------- */
+async function runPipeline() {
+  const raw = el("rawPrompt").value.trim();
+  if (!raw) { alert("Enter a prompt first"); return; }
+  const ctx = el("ctx").value.trim();
+  el("runBtn").disabled = true;
+  el("runBtn").textContent = "Running…";
+  const runStartedAt = Date.now();
+  BUNDLE = {};
+  renderPipeline();
+  resetCritic();
+  paintBundle();
+  const runId = uid();
+  el("m-id").textContent = runId;
+  el("m-ts").textContent = new Date().toLocaleTimeString();
+
+  try {
+    if (BACKEND_MODE) {
+      setStageState("intake", "running");
+      const data = await callBackendPlan(raw, ctx, el("autoReviseToggle").checked);
+      // Paint all stages done from the backend bundle
+      const map = {
+        intake: data.intake, memory: data.memory, intent: data.intent, reframe: data.reframe,
+        scope: data.scope, architect: data.architecture, research: data.research,
+        execution: data.execution, router: data.routing, critic: data.critic,
+        output: { output: data.output, memory_writeback: data.memory_writeback, worker_feedback: data.worker_feedback },
+      };
+      for (const id of Object.keys(map)) setStageState(id, "done", { ms: Math.round((data.latency_ms||0) / 11), output: map[id] });
+      BUNDLE = { output: data.output, routing: data.routing, memory_writeback: data.memory_writeback, worker_feedback: data.worker_feedback };
+      REVISIONS = data.revisions || 0;
+      el("m-rev").textContent = `${REVISIONS} / ${MAX_REVISIONS}`;
+      retrievedIds = new Set((data.memory?.rows||[]).map(r => r.id));
+      renderMemList();
+      renderCritic(data.critic);
+      paintBundle();
+    } else {
+      await runLocalPipeline(raw, ctx);
+    }
+  } catch (e) {
+    console.error(e);
+    alert("Pipeline failed: " + (e.message || e));
+  } finally {
+    el("runBtn").disabled = false;
+    el("runBtn").textContent = "Run pipeline";
+    el("m-rt").textContent = (Date.now() - runStartedAt) + "ms";
+  }
+}
+
+async function runLocalPipeline(raw, ctx) {
+  // 01 Intake
+  setStageState("intake", "running");
+  const intake = { request_id: uid(), type: "founder_build_prompt", timestamp: nowIso() };
+  setStageState("intake", "done", { ms: 3, output: intake });
+
+  // 02 Memory
+  setStageState("memory", "running");
+  const mem = retrieveMemory(raw, ctx);
+  retrievedIds = new Set(mem.rows.map(r => r.id));
+  renderMemList();
+  setStageState("memory", "done", { ms: 5, output: mem });
+
+  // 03-08 Brain stages
+  const intent    = await runStage("intent",    () => DEMO.intent(raw, ctx),    () => callClaude({ system: "You are the Intent Interpreter. Return only JSON.", user: `Raw: ${raw}\nContext: ${ctx}` }));
+  const reframe   = await runStage("reframe",   () => DEMO.reframe(raw, ctx),   () => callClaude({ system: "You are the Problem Reframer. Return only JSON.", user: `Intent: ${pretty(intent)}` }));
+  const scope     = await runStage("scope",     () => DEMO.scope(raw, ctx),     () => callClaude({ system: "You are the Scope Engine. Return only JSON.", user: `Intent: ${pretty(intent)}\nReframe: ${pretty(reframe)}` }));
+  const arch      = await runStage("architect", () => DEMO.architect(raw, ctx), () => callClaude({ system: "You are the Architecture Engine. Return only JSON.", user: `Scope: ${pretty(scope)}` }));
+  const research  = await runStage("research",  () => DEMO.research(raw, ctx),  () => callClaude({ system: "You are the Research Planner. Return only JSON.", user: `Arch: ${pretty(arch)}` }));
+  const execution = await runStage("execution", () => DEMO.execution(raw, ctx), () => callClaude({ system: "You are the Execution Planner. Return only JSON.", user: `Arch: ${pretty(arch)}\nScope: ${pretty(scope)}` }));
+
+  // 09 Router
+  const routing = await runStage("router", () => DEMO.router(scope, arch, research, execution), () => callClaude({ system: "You are the Router.", user: `Tasks: research + execution + meta` }));
+
+  // 10 Critic (with optional revision loop)
+  let critic = await runStage("critic", () => DEMO.critic(raw, ctx, { architecture: arch, scope, research, execution, reframe, router: routing }), () => callClaude({ system: "You are the Critic.", user: `Bundle: ${pretty({ arch, scope, research, execution, reframe, routing })}` }));
+  let revisedArch = arch, revisedScope = scope, revisedResearch = research, revisedExecution = execution, revisedRouting = routing;
+  let revisedCtx = ctx;
+
+  while (el("autoReviseToggle").checked && critic.status === "revise" && REVISIONS < MAX_REVISIONS) {
+    REVISIONS++;
+    el("m-rev").textContent = `${REVISIONS} / ${MAX_REVISIONS}`;
+    revisedCtx = (revisedCtx ? revisedCtx + "\n" : "") +
+      "Critic failures: " + (critic.failures||[]).join("; ") +
+      "\nApply fixes: " + (critic.fixes||[]).join("; ");
+    // Re-run stages 05-10 with fixes injected into ctx
+    revisedScope     = await DEMO.scope(raw, revisedCtx);
+    revisedArch      = await DEMO.architect(raw, revisedCtx);
+    revisedResearch  = await DEMO.research(raw, revisedCtx);
+    revisedExecution = await DEMO.execution(raw, revisedCtx);
+    revisedRouting   = await DEMO.router(revisedScope, revisedArch, revisedResearch, revisedExecution);
+    critic = await DEMO.critic(raw, revisedCtx, { architecture: revisedArch, scope: revisedScope, research: revisedResearch, execution: revisedExecution, reframe, router: revisedRouting });
+    setStageState("scope",     "done", { ms: 0, output: revisedScope, error: undefined });
+    setStageState("architect", "done", { ms: 0, output: revisedArch });
+    setStageState("research",  "done", { ms: 0, output: revisedResearch });
+    setStageState("execution", "done", { ms: 0, output: revisedExecution });
+    setStageState("router",    "done", { ms: 0, output: revisedRouting });
+    setStageState("critic",    "done", { ms: 0, output: critic, notes: `revision ${REVISIONS}` });
+  }
+
+  // 11 Output + memwb
+  setStageState("output", "running");
+  const output = await DEMO.output(raw, revisedCtx, intent, reframe, revisedScope, revisedArch);
+  const memwb = await DEMO.memwb(critic);
+  setStageState("output", "done", { ms: 8, output: { output, memory_writeback: memwb } });
+
+  BUNDLE = { output, routing: revisedRouting, memory_writeback: memwb, worker_feedback: [] };
+  renderCritic(critic);
+  paintBundle();
+}
+
+async function reviseAndRerun() {
+  // Simulate one manual revision pass by injecting fixes and re-running the tail stages.
+  const raw = el("rawPrompt").value.trim();
+  const ctx = el("ctx").value.trim();
+  const lastCritic = (STAGE_STATES.critic || {}).output;
+  if (!lastCritic) return;
+  REVISIONS++;
+  el("m-rev").textContent = `${REVISIONS} / ${MAX_REVISIONS}`;
+  const revisedCtx = (ctx ? ctx + "\n" : "") +
+    "Critic failures: " + (lastCritic.failures||[]).join("; ") +
+    "\nApply fixes: " + (lastCritic.fixes||[]).join("; ");
+  const intent = (STAGE_STATES.intent || {}).output;
+  const reframe = (STAGE_STATES.reframe || {}).output;
+  const scope = await DEMO.scope(raw, revisedCtx);
+  const arch = await DEMO.architect(raw, revisedCtx);
+  const research = await DEMO.research(raw, revisedCtx);
+  const execution = await DEMO.execution(raw, revisedCtx);
+  const routing = await DEMO.router(scope, arch, research, execution);
+  const critic = await DEMO.critic(raw, revisedCtx, { architecture: arch, scope, research, execution, reframe, router: routing });
+  const output = await DEMO.output(raw, revisedCtx, intent, reframe, scope, arch);
+  const memwb = await DEMO.memwb(critic);
+  setStageState("scope", "done", { ms: 0, output: scope });
+  setStageState("architect", "done", { ms: 0, output: arch });
+  setStageState("research", "done", { ms: 0, output: research });
+  setStageState("execution", "done", { ms: 0, output: execution });
+  setStageState("router", "done", { ms: 0, output: routing });
+  setStageState("critic", "done", { ms: 0, output: critic });
+  setStageState("output", "done", { ms: 0, output: { output, memory_writeback: memwb } });
+  BUNDLE = { output, routing, memory_writeback: memwb, worker_feedback: [] };
+  renderCritic(critic);
+  paintBundle();
+}
+
+/* ---------- Mode wiring ---------- */
+function applyMode() {
+  DEMO_MODE = el("demoToggle").checked;
+  BACKEND_MODE = el("backendToggle").checked;
+  const realApiVisible = !DEMO_MODE && !BACKEND_MODE;
+  el("keyWrap").style.display = realApiVisible ? "flex" : "none";
+  el("modelWrap").style.display = realApiVisible ? "flex" : "none";
+  el("backendWrap").style.display = BACKEND_MODE ? "flex" : "none";
+  const modeText = BACKEND_MODE ? "backend · orchestrator" : DEMO_MODE ? "demo · local" : "claude api";
+  el("m-mode").textContent = modeText;
+  el("sb-mode").textContent = modeText;
+}
+
+/* ---------- Event wiring ---------- */
+document.addEventListener("DOMContentLoaded", () => {
+  renderPipeline();
+  renderMemTabs();
+  renderMemList();
+  applyMode();
+
+  el("demoToggle").addEventListener("change", applyMode);
+  el("backendToggle").addEventListener("change", applyMode);
+  el("runBtn").addEventListener("click", runPipeline);
+  el("seedBtn").addEventListener("click", () => { el("rawPrompt").value = SEED_PROMPT; el("ctx").value = ""; });
+  el("clearPromptBtn").addEventListener("click", () => { el("rawPrompt").value = ""; el("ctx").value = ""; });
+  el("clearBtn").addEventListener("click", () => {
+    BUNDLE = {}; renderPipeline(); resetCritic(); paintBundle();
+    el("m-id").textContent = "—"; el("m-ts").textContent = "—"; el("m-rt").textContent = "—";
+    el("m-critic").textContent = "—";
+    retrievedIds = new Set(); renderMemList();
+  });
+  document.querySelectorAll("#bundleTabs button").forEach(b =>
+    b.addEventListener("click", () => { activeTab = b.dataset.tab; paintBundle(); })
+  );
+});
+</script>
+</body>
+</html>

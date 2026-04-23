@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Val OS</title>
+  <meta name="description" content="Val OS — a judgment-first operating system that turns founder prompts into typed architecture, routing, and execution plans." />
+  <style>
+    :root {
+      --bg: #07050d;
+      --ink: #f7f2ff;
+      --muted: rgba(247, 242, 255, 0.62);
+      --pink: #f9b6ff;
+      --violet: #8d6bff;
+      --cyan: #8ff0ff;
+      --line: rgba(247, 242, 255, 0.14);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(141, 107, 255, 0.22), transparent 60%),
+        radial-gradient(ellipse 70% 50% at 80% 20%, rgba(249, 182, 255, 0.16), transparent 60%),
+        radial-gradient(ellipse 60% 50% at 50% 100%, rgba(143, 240, 255, 0.14), transparent 60%),
+        var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 48px 24px;
+    }
+    .wrap {
+      max-width: 860px;
+      width: 100%;
+      text-align: center;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.25em;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+    h1 {
+      font-size: clamp(48px, 9vw, 112px);
+      line-height: 0.95;
+      margin: 0 0 24px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      background: linear-gradient(120deg, var(--pink) 0%, var(--violet) 45%, var(--cyan) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .tag {
+      font-size: clamp(16px, 2.2vw, 22px);
+      color: var(--ink);
+      opacity: 0.85;
+      max-width: 620px;
+      margin: 0 auto 40px;
+      line-height: 1.45;
+    }
+    .cta {
+      display: inline-flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 22px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      letter-spacing: 0.01em;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+      border: 1px solid var(--line);
+    }
+    a.btn.primary {
+      background: linear-gradient(120deg, var(--violet), var(--pink));
+      color: #0a0612;
+      border-color: transparent;
+    }
+    a.btn.secondary {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    a.btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(141, 107, 255, 0.18); }
+    .pipeline {
+      margin-top: 64px;
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      flex-wrap: wrap;
+      opacity: 0.7;
+    }
+    .stage {
+      font-size: 10px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .foot {
+      margin-top: 64px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .foot a { color: var(--cyan); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">judgment-first operating system</div>
+    <h1>Val OS</h1>
+    <div class="tag">
+      Turn founder prompts into typed architecture, routing, and execution plans.
+      Eleven stages. Critic gate. Revision loop. Typed memory. Pluggable workers.
+    </div>
+
+    <div class="cta">
+      <a class="btn primary" href="/app">Open the playground</a>
+      <a class="btn secondary" href="/pitch">See the hackathon pitch</a>
+    </div>
+
+    <div class="pipeline">
+      <div class="stage">Intake</div>
+      <div class="stage">Intent</div>
+      <div class="stage">Reframe</div>
+      <div class="stage">Memory</div>
+      <div class="stage">Scope</div>
+      <div class="stage">Architect</div>
+      <div class="stage">Research</div>
+      <div class="stage">Execution</div>
+      <div class="stage">Router</div>
+      <div class="stage">Critic</div>
+      <div class="stage">Output</div>
+      <div class="stage">Memwb</div>
+    </div>
+
+    <div class="foot">
+      Deployed on Vercel · FastAPI + Neon · <a href="https://github.com/valsea/val-os">GitHub</a>
+    </div>
+  </div>
+</body>
+</html>
