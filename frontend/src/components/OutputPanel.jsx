@@ -1,7 +1,12 @@
-import { pretty } from "../lib/utils.js";
+import PrdView from "./PrdView.jsx";
+import RoutingTable from "./RoutingTable.jsx";
+import ScopeMap from "./ScopeMap.jsx";
+import SystemGraph from "./SystemGraph.jsx";
+import WorkerCards from "./WorkerCards.jsx";
 
 const TABS = [
   { id: "prd",     label: "PRD" },
+  { id: "scope",   label: "Scope" },
   { id: "system",  label: "System" },
   { id: "routing", label: "Routing" },
   { id: "workers", label: "Workers" },
@@ -10,81 +15,106 @@ const TABS = [
   { id: "memwb",   label: "Memwb" },
 ];
 
+function EmptyState() {
+  return (
+    <div className="output-empty">
+      <div className="output-empty-icon">⬡</div>
+      <div className="output-empty-title">No output yet</div>
+      <div className="output-empty-sub">Run the pipeline to generate a PRD, architecture, routing plan, and execution queue.</div>
+    </div>
+  );
+}
+
 function renderContent(activeTab, bundle) {
-  if (!bundle || Object.keys(bundle).length === 0) {
-    return (
-      <div style={{ color: "var(--ink-mute)", padding: "12px 0" }}>
-        Run the pipeline to see the bundle.
-      </div>
-    );
-  }
+  if (!bundle || Object.keys(bundle).length === 0) return <EmptyState />;
 
   const o = bundle.output || {};
 
-  if (activeTab === "prd") {
-    return <pre>{pretty(o.prd || {})}</pre>;
+  if (activeTab === "prd")     return <PrdView prd={o.prd} />;
+  if (activeTab === "scope")   return <ScopeMap scope={bundle.scope} />;
+  if (activeTab === "system")  return <SystemGraph arch={bundle.architect} />;
+  if (activeTab === "routing") return <RoutingTable routing={bundle.routing} />;
+  if (activeTab === "workers") return <WorkerCards workers={bundle.worker_feedback} />;
+
+  if (activeTab === "qa") {
+    const items = o.qa_checklist || [];
+    return items.length ? (
+      <ul className="checklist">
+        {items.map((q, i) => <li key={i}><span className="check-icon">✓</span>{q}</li>)}
+      </ul>
+    ) : <EmptyState />;
   }
-  if (activeTab === "system") {
-    return <pre>{pretty(o.system_spec || {})}</pre>;
+
+  if (activeTab === "deploy") {
+    const items = o.deployment_checklist || [];
+    return items.length ? (
+      <ul className="checklist">
+        {items.map((q, i) => <li key={i}><span className="check-icon">◆</span>{q}</li>)}
+      </ul>
+    ) : <EmptyState />;
   }
-  if (activeTab === "routing") {
-    return <pre>{pretty(bundle.routing || {})}</pre>;
-  }
-  if (activeTab === "workers") {
-    const wf = bundle.worker_feedback || [];
-    if (wf.length) return <pre>{pretty(wf)}</pre>;
+
+  if (activeTab === "memwb") {
+    const recs = bundle.memory_writeback?.recommendations || [];
+    if (!recs.length) return <EmptyState />;
     return (
-      <div style={{ color: "var(--ink-mute)", padding: "8px 0" }}>
-        No worker feedback. Workers dispatch in backend mode (or when wired locally).
+      <div className="memwb-list">
+        {recs.map((r, i) => (
+          <div key={i} className={`memwb-card ${r.should_write ? "write" : "skip"}`}>
+            <div className="memwb-card-top">
+              <span className={`memwb-badge ${r.should_write ? "write" : "skip"}`}>
+                {r.should_write ? "write" : "skip"}
+              </span>
+              <span className="memwb-type">{r.memory_type}</span>
+              <div className="memwb-conf-bar-wrap">
+                <div className="memwb-conf-bar">
+                  <div
+                    className="memwb-conf-fill"
+                    style={{ width: `${Math.round((r.confidence || 0) * 100)}%` }}
+                  />
+                </div>
+                <span className="memwb-conf-label">{r.confidence?.toFixed(2)}</span>
+              </div>
+            </div>
+            <div className="memwb-title">{r.title}</div>
+            {r.justification && (
+              <div className="memwb-just">{r.justification}</div>
+            )}
+          </div>
+        ))}
       </div>
     );
   }
-  if (activeTab === "qa") {
-    return (
-      <>
-        <h4>QA checklist</h4>
-        <ul>
-          {(o.qa_checklist || []).map((q, i) => (
-            <li key={i}>{q}</li>
-          ))}
-        </ul>
-      </>
-    );
-  }
-  if (activeTab === "deploy") {
-    return (
-      <>
-        <h4>Deployment checklist</h4>
-        <ul>
-          {(o.deployment_checklist || []).map((q, i) => (
-            <li key={i}>{q}</li>
-          ))}
-        </ul>
-      </>
-    );
-  }
-  if (activeTab === "memwb") {
-    return <pre>{pretty(bundle.memory_writeback || {})}</pre>;
-  }
+
   return null;
 }
 
-export default function OutputPanel({ bundle, activeTab, setActiveTab }) {
-  return (
-    <section className="panel">
-      <h3>output bundle</h3>
+const MAX_REVISIONS = 2;
 
-      <div className="tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            data-tab={t.id}
-            className={activeTab === t.id ? "active" : ""}
-            onClick={() => setActiveTab(t.id)}
-          >
-            {t.label}
+export default function OutputPanel({ bundle, activeTab, setActiveTab, criticData, onReviseAndRerun, revisions }) {
+  const hasBundle = bundle && Object.keys(bundle).length > 0;
+
+  return (
+    <section className="panel output-panel">
+      <div className="output-tabs-wrap">
+        <div className="tabs output-tabs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={activeTab === t.id ? "active" : ""}
+              onClick={() => setActiveTab(t.id)}
+              disabled={!hasBundle && t.id !== "prd"}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {criticData?.status === "revise" && revisions < MAX_REVISIONS && (
+          <button className="btn warn output-revise-btn" onClick={onReviseAndRerun}>
+            Revise &amp; re-run ({revisions + 1}/{MAX_REVISIONS})
           </button>
-        ))}
+        )}
       </div>
 
       <div className="bundle-body">

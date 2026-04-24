@@ -4,7 +4,7 @@
  */
 export async function callBackendPlan(rawPrompt, context, autoRevise, backendUrl) {
   const base = (backendUrl || "http://localhost:8080").replace(/\/+$/, "");
-  const res = await fetch(base + "/plan", {
+  const res = await fetch(base + "/api/plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

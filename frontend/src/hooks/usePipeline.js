@@ -195,7 +195,7 @@ export function usePipeline({
     const memwb = await DEMO.memwb(critic);
     stageUpdate("output", "done", { ms: 8, output: { output, memory_writeback: memwb } });
 
-    const bundle = { output, routing: revisedRouting, memory_writeback: memwb, worker_feedback: [] };
+    const bundle = { output, routing: revisedRouting, scope: revisedScope, architect: revisedArch, memory_writeback: memwb, worker_feedback: [] };
     setBundle(bundle);
     return { bundle, critic };
   }
@@ -253,6 +253,8 @@ export function usePipeline({
           const bundle = {
             output: data.output,
             routing: data.routing,
+            scope: data.scope,
+            architect: data.architecture,
             memory_writeback: data.memory_writeback,
             worker_feedback: data.worker_feedback,
           };
@@ -316,7 +318,7 @@ export function usePipeline({
         output:    { ...prev.output,    state: "done", output: { output, memory_writeback: memwb }, ms: 0, error: null },
       }));
 
-      const bundle = { output, routing, memory_writeback: memwb, worker_feedback: [] };
+      const bundle = { output, routing, scope, architect: arch, memory_writeback: memwb, worker_feedback: [] };
       setBundle(bundle);
       setMetrics((m) => ({
         ...m,
