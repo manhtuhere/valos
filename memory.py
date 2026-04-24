@@ -14,8 +14,8 @@ from typing import Iterable
 
 import asyncpg
 
-from .config import get_settings
-from .schemas import MemoryContext, MemoryRecommendation, MemoryRow
+from config import get_settings
+from schemas import MemoryContext, MemoryRecommendation, MemoryRow
 
 TYPE_WEIGHT: dict[str, float] = {
     "founder_principles": 1.10,

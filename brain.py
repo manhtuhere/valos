@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import schemas as S
+import schemas as S
 
 _STOP = {
     "a","an","the","and","or","to","for","of","in","on","with","by","me","my",

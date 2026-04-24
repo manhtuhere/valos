@@ -19,8 +19,8 @@ from typing import Any
 
 import httpx
 
-from .config import get_settings
-from .schemas import WorkerResponse
+from config import get_settings
+from schemas import WorkerResponse
 
 
 # --- inline mode --------------------------------------------------------------

@@ -20,9 +20,9 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import brain, memory
-from .config import get_settings
-from .schemas import (
+import brain, memory
+from config import get_settings
+from schemas import (
     CriticVerdict,
     Intake,
     MemoryContext,
@@ -33,7 +33,7 @@ from .schemas import (
     RoutingPlan,
     WorkerResponse,
 )
-from .workers import dispatch_routes
+from workers import dispatch_routes
 
 log = logging.getLogger("valos.orchestrator")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')

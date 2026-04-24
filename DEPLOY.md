@@ -9,30 +9,48 @@ End-to-end walkthrough: GitHub → Neon → Vercel. Budget ~20 minutes start to 
 - A GitHub account.
 - A Vercel account ([vercel.com/signup](https://vercel.com/signup)).
 - A Neon account ([neon.tech](https://neon.tech)). Free tier is plenty.
-- Python 3.11+ locally (only if you want to run the orchestrator off-Vercel for debugging).
+- Python 3.11+ and Node 18+ locally.
 
 You do **not** need to install the Vercel CLI — this walkthrough is GitHub-auto-deploy.
+
+---
+
+## Local development
+
+**Backend (FastAPI):**
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # fill in DATABASE_URL if you have Postgres locally
+uvicorn main:app --reload --port 8080
+```
+
+**Frontend (React + Vite):**
+```bash
+cd frontend
+npm install
+npm run dev       # http://localhost:5173
+```
+
+The frontend dev server proxies nothing — flip the **backend** toggle in the UI header and point it at `http://localhost:8080` to hit your local FastAPI.
 
 ---
 
 ## 1. Push the repo to GitHub
 
 ```bash
-cd val-os-vercel
 git init
 git add .
-git commit -m "val os — initial vercel-ready commit"
-gh repo create val-os-vercel --public --source=. --push
+git commit -m "val os — initial commit"
+gh repo create val-os --public --source=. --push
 ```
 
-Or create the repo in the GitHub UI and `git remote add origin` + `git push -u origin main` manually.
-
 **Sanity check:**
-
 ```bash
 ls
-# api/  orchestrator/  sql/  index.html  val-os.html  val-os-hackathon.html
-# vercel.json  requirements.txt  .env.example  .gitignore  README.md  DEPLOY.md
+# main.py  brain.py  schemas.py  memory.py  workers.py  config.py
+# index.py  schema.sql  seeds.sql  frontend/  index.html
+# vercel.json  requirements.txt  .env.example  .gitignore
 ```
 
 ---
@@ -40,47 +58,64 @@ ls
 ## 2. Stand up Postgres on Neon
 
 1. [console.neon.tech](https://console.neon.tech) → **New Project**.
-2. Name it `val-os`. Region: whatever is closest to your Vercel region (usually `us-east-2` or `eu-central-1`).
+2. Name it `val-os`. Region: closest to your Vercel region (`us-east-2` or `eu-central-1`).
 3. Database name: `valos`.
-4. Grab the **pooled** connection string from the dashboard. It looks like:
+4. Grab the **pooled** connection string:
    ```
    postgresql://valos_owner:xxxxxxxx@ep-cool-name-12345.us-east-2.aws.neon.tech/valos?sslmode=require
    ```
-   > Use the **pooler** URL, not the direct one. Serverless functions reconnect on every cold start — the pooler fronts PgBouncer so you don't blow through connection limits.
+   > Use the **pooler** URL, not the direct one — serverless cold starts reconnect on every invocation.
 
-5. Load the schema + seeds. From the Neon SQL editor, paste `sql/schema.sql` and run it. Then paste `sql/seeds.sql` and run it.
-
-   Or from your machine:
+5. Load schema + seeds. From the Neon SQL editor or locally:
    ```bash
-   psql "postgresql://valos_owner:xxxx@ep-xxx.neon.tech/valos?sslmode=require" -f sql/schema.sql
-   psql "postgresql://valos_owner:xxxx@ep-xxx.neon.tech/valos?sslmode=require" -f sql/seeds.sql
+   psql "postgresql://valos_owner:xxxx@ep-xxx.neon.tech/valos?sslmode=require" -f schema.sql
+   psql "postgresql://valos_owner:xxxx@ep-xxx.neon.tech/valos?sslmode=require" -f seeds.sql
    ```
 
-6. Confirm seed data loaded:
+6. Confirm:
    ```sql
    SELECT count(*) FROM founder_principles;  -- should be > 0
    ```
 
 ---
 
-## 3. Import the repo into Vercel
+## 3. Build the frontend
 
-1. [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → pick `val-os-vercel`.
-2. **Framework preset:** `Other` (Vercel auto-detects `vercel.json`).
-3. **Root Directory:** leave blank — the repo root is the project root.
-4. **Build & Output Settings:** leave defaults. `vercel.json` handles everything.
+The React app lives in `frontend/`. Build it before deploying:
 
-Do **not** click Deploy yet — set env vars first, or the first build will 500 on `/api/*`.
+```bash
+cd frontend && npm install && npm run build
+```
+
+Output lands in `frontend/dist/`. Commit it:
+
+```bash
+git add frontend/dist
+git commit -m "build: frontend dist"
+```
+
+> For CI/CD, add a Vercel build command: `cd frontend && npm install && npm run build`. Set **Root Directory** to the repo root and **Output Directory** to `frontend/dist` for the static output.
 
 ---
 
-## 4. Set environment variables in Vercel
+## 4. Import the repo into Vercel
 
-Project → **Settings** → **Environment Variables**. Add these for the `Production`, `Preview`, and `Development` environments:
+1. [vercel.com/new](https://vercel.com/new) → **Import Git Repository** → pick `val-os`.
+2. **Framework preset:** `Other`.
+3. **Root Directory:** leave blank.
+4. **Build & Output Settings:** leave defaults — `vercel.json` handles routing.
+
+Do **not** click Deploy yet.
+
+---
+
+## 5. Set environment variables in Vercel
+
+Project → **Settings** → **Environment Variables**. Add for `Production`, `Preview`, and `Development`:
 
 | Key | Value |
 |---|---|
-| `DATABASE_URL` | the Neon pooled DSN from step 2 |
+| `DATABASE_URL` | Neon pooled DSN from step 2 |
 | `DATABASE_URL_REQUIRES_SSL` | `true` |
 | `WORKER_MODE` | `inline` |
 | `ROUTER_MIN_CONFIDENCE` | `0.75` |
@@ -88,7 +123,7 @@ Project → **Settings** → **Environment Variables**. Add these for the `Produ
 | `MEMWB_MIN_CONFIDENCE` | `0.75` |
 | `ENABLE_PERSIST_RUNS` | `false` |
 
-Optional — only if you wire real Claude calls into `brain.py`:
+Optional (only needed once brain.py stubs are replaced with real Claude calls):
 
 | Key | Value |
 |---|---|
@@ -97,98 +132,86 @@ Optional — only if you wire real Claude calls into `brain.py`:
 
 ---
 
-## 5. Deploy
+## 6. Deploy
 
-Click **Deploy**. First build takes ~90 seconds because Vercel installs `fastapi`, `asyncpg`, and `httpx` into the function bundle. Subsequent deploys are faster thanks to cached layers.
-
-Once the build finishes, you'll get a `https://val-os-vercel-<hash>.vercel.app` URL.
+Click **Deploy**. First build takes ~90s (installs `fastapi`, `asyncpg`, `httpx`). Subsequent deploys are faster with cached layers.
 
 ---
 
-## 6. Smoke test
+## 7. Smoke test
 
 ```bash
-BASE="https://val-os-vercel-<hash>.vercel.app"
+BASE="https://val-os-<hash>.vercel.app"
 
 # Health
 curl $BASE/api/healthz | jq
 # → {"ok": true, "runtime": "vercel", "postgres": true, "worker_mode": "inline", ...}
 
-# A real plan
+# Plan
 curl -X POST $BASE/api/plan \
   -H 'content-type: application/json' \
   -d '{"raw_prompt":"Build a typed memory layer that beats RAG","auto_revise":true,"dispatch_workers":true}' \
   | jq '.critic, .revisions'
 # → {"status":"approve","score":0.83,...}
-# → 0  (or 1 if revision kicked in)
 
 # Memory
 curl "$BASE/api/memory?prompt=typed+memory" | jq '.rows | length'
 # → >0 (if seeds loaded)
 ```
 
-Then open `$BASE/app` in a browser. The page auto-detects same-origin `/api`. Flip **backend** on in the header and hit **Run** — you should see real stage outputs stream in and the critic badge flip to `approve` or `revise`.
+Open `$BASE/app` in a browser. Flip **backend** on in the header and hit **Run**.
 
 ---
 
-## 7. Post-deploy
+## 8. Post-deploy
 
 ### GitHub auto-deploy
-
-Every push to `main` deploys to Production. Every push to any other branch / PR gets a Preview URL — great for iterating on `brain.py` or the HTML without breaking production.
+Every push to `main` deploys to Production. Every PR gets a Preview URL.
 
 ### Custom domain
-
-Project → Settings → Domains → Add. Point a CNAME at `cname.vercel-dns.com`. The same-origin `/api` trick in `val-os.html` keeps working under any domain because the JS uses `location.origin`.
+Project → Settings → Domains → Add. Point a CNAME at `cname.vercel-dns.com`. The same-origin `/api` trick in the React app keeps working under any domain.
 
 ### Swap to real workers
-
-When Manus / OpenClaw are deployed somewhere reachable (Fly, Railway, a dedicated worker VM), set:
-
+When Manus / OpenClaw are deployed:
 ```
 WORKER_MODE=http
-MANUS_BASE_URL=https://manus.<your domain>
-OPENCLAW_BASE_URL=https://openclaw.<your domain>
+MANUS_BASE_URL=https://manus.<your-domain>
+OPENCLAW_BASE_URL=https://openclaw.<your-domain>
 ```
+No code change needed.
 
-No orchestrator code change needed — the dispatch path checks `worker_mode` at request time.
-
-### Turn on `plan_runs` audit
-
-If you want every run persisted to Postgres for later replay / eval:
-
+### Turn on plan_runs audit
 ```
 ENABLE_PERSIST_RUNS=true
 ```
-
-Keep in mind: this consumes the invocation's single usable DB connection for an extra write. On a chatty endpoint, budget accordingly.
+Consumes the invocation's DB connection for an extra write — budget accordingly.
 
 ---
 
 ## Troubleshooting
 
 **`/api/healthz` returns 500**
-Usually missing `DATABASE_URL` or wrong SSL flag. Check Vercel Logs (Project → Logs → Function) — the error message will include `asyncpg.ConnectionFailureError` or similar. Add `DATABASE_URL_REQUIRES_SSL=true` and redeploy.
+Missing `DATABASE_URL` or wrong SSL flag. Check Vercel Logs → Function. Add `DATABASE_URL_REQUIRES_SSL=true` and redeploy.
 
-**`postgres: false` with `postgres_error: "OSError: [SSL: WRONG_VERSION_NUMBER]"`**
-You pointed Vercel at the direct (non-pooled) DSN, or your Neon project's DSN is `sslmode=disable`. Grab the pooled DSN from Neon; make sure `sslmode=require` is in it.
+**`postgres: false` with `SSL: WRONG_VERSION_NUMBER`**
+You're using the direct DSN instead of the pooled one. Grab the pooler URL from Neon; ensure `sslmode=require` is in it.
 
-**`ModuleNotFoundError: No module named 'orchestrator'`**
-The `api/index.py` entrypoint expects `orchestrator/` at the project root. If you moved it, update the import: `from <newpath>.main import app`.
+**`ImportError: attempted relative import with no known parent package`**
+The Python modules use absolute imports — run from the repo root with `uvicorn main:app`, not `uvicorn orchestrator.main:app`.
 
 **Cold starts feel slow**
-Vercel's Python runtime cold-starts in ~1.5s. After the first request, subsequent requests to the same region reuse the process for ~5 minutes. If it matters, bump `WORKER_MODE=inline` (no outbound calls) and keep `ENABLE_PERSIST_RUNS=false` — you'll trim the invocation down to the critical path.
+Vercel Python cold-starts in ~1.5s then reuses the process for ~5 minutes. Keep `WORKER_MODE=inline` and `ENABLE_PERSIST_RUNS=false` to stay on the critical path.
 
 **CORS errors in the browser console**
-Shouldn't happen — `val-os.html` and `/api/*` share the same origin. If you're hitting the API from a different domain, add that origin to the `CORSMiddleware` allow-list in `orchestrator/main.py`.
+Shouldn't happen from `$BASE/app` — same origin. If hitting from a different domain, add it to `CORSMiddleware` `allow_origins` in `main.py`.
 
-**Built successfully but `/app` 404s**
-`vercel.json` maps `/app` to `val-os.html`. If you renamed the HTML file, update both the `builds` and `routes` entries.
+**`/app` 404s**
+`vercel.json` maps `/app` to the frontend. If the `frontend/dist/` build wasn't committed or the route is misconfigured, redeploy after running `cd frontend && npm run build` and committing `frontend/dist/`.
 
 ---
 
 ## What's next
 
-- **Swap brain.py stubs for real Claude calls.** The 11 stage functions are pure Python today — replace `intent()`, `scope()`, `architect()`, etc. with prompts to the Anthropic API. The shapes stay the same so nothing else breaks.
-- **Add auth.** Vercel has built-in password protection for Preview deploys; for Production, put Clerk / Auth.js / Cloudflare Access in front of `/app`.
-- **Add eval.** With `ENABLE_PERSIST_RUNS=true` you build up a corpus of `(raw_prompt, bundle, critic)` triples. That's a regression test set for every change to `brain.py`.
+- **Swap brain.py stubs for real Claude calls.** Each stage function is pure Python today — replace `intent()`, `scope()`, `architect()`, etc. with prompts to the Anthropic API. Shapes stay the same.
+- **Add auth.** Vercel password protection for Preview; Clerk / Auth.js / Cloudflare Access for Production.
+- **Add eval.** With `ENABLE_PERSIST_RUNS=true` you build up `(raw_prompt, bundle, critic)` triples — a regression test set for every change to `brain.py`.

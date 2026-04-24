@@ -10,7 +10,7 @@
       }
     },
     {
-      "src": "val-os.html",
+      "src": "frontend/dist/**",
       "use": "@vercel/static"
     },
     {
@@ -24,7 +24,8 @@
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.py" },
-    { "src": "/app", "dest": "/val-os.html" },
+    { "src": "/app/assets/(.*)", "dest": "/frontend/dist/assets/$1" },
+    { "src": "/app", "dest": "/frontend/dist/index.html" },
     { "src": "/pitch", "dest": "/val-os-hackathon.html" },
     { "src": "/", "dest": "/index.html" }
   ]
