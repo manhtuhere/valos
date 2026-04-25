@@ -6,7 +6,16 @@
       "use": "@vercel/python",
       "config": {
         "maxLambdaSize": "50mb",
-        "runtime": "python3.11"
+        "runtime": "python3.11",
+        "includeFiles": [
+          "main.py",
+          "brain.py",
+          "schemas.py",
+          "memory.py",
+          "workers.py",
+          "config.py",
+          "schema.sql"
+        ]
       }
     },
     {
