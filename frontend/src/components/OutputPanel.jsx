@@ -39,11 +39,39 @@ function renderContent(activeTab, bundle) {
 
   if (activeTab === "qa") {
     const items = o.qa_checklist || [];
-    return items.length ? (
+    if (!items.length) return <EmptyState />;
+    const isStructured = items.length > 0 && typeof items[0] === "object";
+    if (isStructured) {
+      const CATEGORY_COLORS = {
+        "Semantic accuracy": "var(--accent)",
+        "Latency":           "#60a5fa",
+        "Integration":       "#34d399",
+        "Edge case":         "#fbbf24",
+        "Regression":        "#f97316",
+      };
+      return (
+        <div className="qa-list">
+          {items.map((q, i) => (
+            <div key={i} className="qa-card">
+              <div className="qa-card-header">
+                <span className="qa-badge" style={{ background: CATEGORY_COLORS[q.category] ? CATEGORY_COLORS[q.category] + "22" : "#1a2030", color: CATEGORY_COLORS[q.category] || "#8a94a4" }}>
+                  {q.category}
+                </span>
+                <span className="qa-test-name">{q.test}</span>
+              </div>
+              {q.input && <div className="qa-row"><span className="qa-label">Input</span><span className="qa-val">{q.input}</span></div>}
+              {q.expected_output && <div className="qa-row"><span className="qa-label">Expected</span><span className="qa-val">{q.expected_output}</span></div>}
+              {q.pass_threshold && <div className="qa-row qa-threshold"><span className="qa-label">Pass</span><span className="qa-val">{q.pass_threshold}</span></div>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return (
       <ul className="checklist">
-        {items.map((q, i) => <li key={i}><span className="check-icon">✓</span>{q}</li>)}
+        {items.map((q, i) => <li key={i}><span className="check-icon">✓</span>{typeof q === "string" ? q : JSON.stringify(q)}</li>)}
       </ul>
-    ) : <EmptyState />;
+    );
   }
 
   if (activeTab === "deploy") {

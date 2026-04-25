@@ -1060,6 +1060,86 @@ textarea::placeholder { color: var(--ink-dim); }
   color: var(--ink-dim);
 }
 
+.gate-banner {
+  background: var(--err-dim);
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.gate-banner-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+.gate-icon {
+  font-size: 10px;
+  background: rgba(248,113,113,0.18);
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.gate-score-bar {
+  height: 3px;
+  background: var(--edge-2);
+  border-radius: 2px;
+  margin-bottom: 4px;
+  overflow: hidden;
+}
+.gate-score-fill {
+  height: 100%;
+  background: var(--err);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.gate-score-label {
+  font-size: 10px;
+  color: var(--ink-dim);
+  margin-bottom: 8px;
+}
+.gate-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  margin: 8px 0 3px;
+}
+.gate-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gate-list li {
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  line-height: 1.4;
+  padding-left: 12px;
+  position: relative;
+}
+.gate-list li::before {
+  content: '·';
+  position: absolute;
+  left: 2px;
+  color: var(--err);
+}
+.gate-suggestion li::before {
+  content: '→';
+  color: var(--accent);
+}
+
 .run-btn {
   width: 100%;
   padding: 11px;
@@ -1836,6 +1916,22 @@ textarea::placeholder { color: var(--ink-dim); }
 .prd-non-goals { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .prd-non-goals li { font-size: 12px; color: var(--ink-mute); line-height: 1.4; }
 .prd-empty { color: var(--ink-mute); padding: 8px 0; font-size: 12px; }
+.prd-problem { font-size: 13px; line-height: 1.6; color: var(--ink); background: #0e1a1a; border-left: 2px solid var(--warn); padding: 8px 12px; border-radius: 4px; }
+.prd-moat { font-size: 13px; line-height: 1.6; color: var(--ink-mute); font-style: italic; }
+.prd-stories { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+.prd-stories li { font-size: 12px; color: var(--ink); line-height: 1.5; }
+
+/* ── QA checklist cards ─────────────────────────────────────────────────────── */
+.qa-list { display: flex; flex-direction: column; gap: 8px; }
+.qa-card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.qa-card-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #0d1520; border-bottom: 1px solid var(--border); }
+.qa-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px; letter-spacing: 0.03em; white-space: nowrap; }
+.qa-test-name { font-size: 12px; font-weight: 600; color: var(--ink); }
+.qa-row { display: grid; grid-template-columns: 68px 1fr; gap: 8px; padding: 5px 12px; border-bottom: 1px solid #1a2030; }
+.qa-row:last-child { border-bottom: none; }
+.qa-threshold { background: #0d1a0d; }
+.qa-label { font-size: 10px; color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.05em; padding-top: 2px; }
+.qa-val { font-size: 12px; color: var(--ink); line-height: 1.5; }
 
 /* ── Priority 5: ArchFlow ───────────────────────────────────────────────────── */
 .af-wrap { display: flex; flex-direction: column; gap: 14px; padding: 2px 0; }

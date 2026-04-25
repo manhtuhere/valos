@@ -308,12 +308,16 @@ Required output fields:
     environment_variables (list[str]) — required env vars with description (e.g., "MERALION_API_KEY — ASR access", "SUPABASE_URL — correction rule store", "N8N_WEBHOOK_SECRET — delivery auth")
     failure_states (list[str]) — 5-8 specific failure modes each with: what breaks, detection method, and graceful degradation behavior (e.g., "MERaLiON timeout > 10s: fallback to Whisper large-v3, flag transcript with low_confidence=true, notify QA dashboard")
 
-- qa_checklist (list[str]) — 10-14 testable QA checks, each written as "[Category] [Test]: [specific input] → [expected output] (PASS threshold: [metric])". Required categories:
-    Semantic accuracy (≥ 4): test L3 correction on real SEA speech — name the language, domain, and minimum accuracy threshold (e.g., "Semantic accuracy — Malay finance: send 50 held-out Malay-English code-switched finance call snippets, verify correction accuracy >= 92% and escalation_flag recall >= 95%")
-    Latency/throughput (≥ 2): pipeline end-to-end latency and concurrent request handling (e.g., "Latency: process a 5-minute call recording end-to-end, verify total pipeline latency < 12s at p95")
-    Integration (≥ 2): webhook delivery, schema validation against buyer's CRM (e.g., "Integration: trigger n8n webhook with structured JSON output, verify HubSpot contact record updated within 5s with zero field mapping errors")
-    Edge cases (≥ 2): code-switching density, accent variation, domain OOV terms (e.g., "Edge case — high code-switch: process recording with >60% language switches per minute, verify no null fields in output")
-    Regression (≥ 1): confirm previously approved correction rules are not overwritten (e.g., "Regression: re-run approved_patterns test suite after any correction rule update, verify zero regressions")
+- qa_checklist (list of objects) — 10-14 QA checks. Each object has:
+    category (str): one of "Semantic accuracy", "Latency", "Integration", "Edge case", "Regression"
+    test (str): short test name (e.g., "Malay finance correction accuracy")
+    input (str): specific input fixture or command (e.g., "50 held-out Malay-English finance call snippets via pytest tests/test_corrector.py::test_malay_finance")
+    expected_output (str): concrete expected result (e.g., "corrected_text has no raw MERaLiON misrecognitions, escalation_flag present on all escalating calls")
+    pass_threshold (str): measurable pass condition (e.g., "correction accuracy >= 92%, escalation_flag recall >= 95%")
+  Required category counts: Semantic accuracy ≥ 4, Latency ≥ 2, Integration ≥ 2, Edge case ≥ 2, Regression ≥ 1.
+  Semantic accuracy tests must name the SEA language, domain, and threshold.
+  Latency tests must include a p95 latency budget in ms or seconds.
+  Integration tests must name the buyer's specific downstream system (HubSpot, Google Sheets, n8n webhook).
 
 - deployment_checklist (list[str]) — 8-12 ordered deployment steps in imperative form, each with a specific verification command or observable outcome. Must include: "commit all correction rules to Supabase correction_rules table with confidence >= 0.9", "verify n8n webhook end-to-end on live enterprise data sample (min 10 real calls)", "run full qa_checklist against staging environment before prod cutover", "configure MERaLiON fallback to Whisper large-v3 with auto-switch threshold"
 
@@ -360,6 +364,29 @@ Required output fields:
 
 Good step example: action="implement", target="L3:semantic_corrector/malay_finance_rules.py", detail="Write a LangGraph node class MalayFinanceCorrector that (1) loads active rules from Supabase correction_rules WHERE language='ms' AND domain='finance' AND confidence >= 0.85, (2) applies fuzzy match (rapidfuzz ratio >= 80) to each token against the rule bank, (3) replaces misrecognitions with canonical forms, (4) appends each correction to a correction_log list for downstream observability. Node input: RawTranscript(text, language_pair, audio_id). Node output: CorrectedTranscript(corrected_text, correction_log, confidence_scores).", code_hint="rules = await db.fetch('SELECT pattern, canonical FROM correction_rules WHERE language=$1 AND confidence>=$2', 'ms', 0.85)\nfor token in tokenize(transcript):\n    match = find_best_match(token, rules, threshold=80)\n    if match: corrected.append(match.canonical); log.append((token, match.canonical, match.score))", acceptance="pytest tests/test_corrector.py::test_malay_finance_50 — 46/50 snippets >= 92% token accuracy", observability="log line 'corrector domain=finance corrections=N latency_ms=X' present for every call in Railway logs"
 Shallow step: action="implement correction", target="backend", detail="add semantic processing"
+
+Call the `emit` tool with your answer."""
+
+_SYS_PROMPT_GATE = """You are the Prompt Quality Gate for Val OS — a fast pre-flight check before the planning pipeline runs.
+
+Single responsibility: determine whether the founder prompt is specific enough for the planning engine to produce a useful output. Catch vague, off-mission, or consumer-facing prompts before pipeline compute is spent.
+
+Score 0.0–1.0:
++0.25 if an enterprise buyer role is identifiable (e.g., "QA manager", "sales ops team", "B2B CRM admin")
++0.20 if a specific SEA language or market context is present (Malay, Indonesian, Tagalog, Thai, Vietnamese, Singlish, code-switching)
++0.20 if the problem maps to at least one VALSEA layer (ASR / semantic correction / structured output / workflow integration)
++0.20 if a specific workflow or integration target is mentioned (n8n, HubSpot, Google Sheets, WhatsApp, CRM, call center tooling)
++0.15 if the scope is narrow enough to yield an MVP (not "build an AI platform")
+-0.30 if the prompt is consumer-facing (not B2B enterprise)
+-0.25 if the problem is unrelated to speech, language processing, or workflow automation
+-0.20 if the goal is purely cosmetic UI/UX with no compounding data value
+
+Required output fields:
+- passed: true if score >= 0.55
+- score: float 0.0–1.0
+- missing: specific gaps that lowered the score (e.g., "enterprise buyer type", "SEA language context", "target workflow integration") — empty if passed
+- suggestions: 1-3 concrete additions that would fix the gaps (e.g., "Specify which SEA language pair", "Name the enterprise buyer role") — empty if passed
+- rejection_reason: one plain sentence explaining the rejection — empty if passed
 
 Call the `emit` tool with your answer."""
 
@@ -554,6 +581,14 @@ def memwb(critic_: S.CriticVerdict) -> S.MemoryWriteback:
         f"Recommend what to persist. Only write if confidence >= {s.memwb_min_confidence}."
     )
     return _call_stage(_SYS_MEMWB, user, S.MemoryWriteback, model=s.haiku_model)
+
+
+def prompt_gate(raw: str, ctx: str | None) -> S.PromptGate:
+    s = get_settings()
+    user = f"Founder prompt: {raw}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_PROMPT_GATE, user, S.PromptGate, model=s.haiku_model, max_tokens=512)
 
 
 def inter_stage_check(

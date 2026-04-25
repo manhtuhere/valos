@@ -173,6 +173,14 @@ class OpenClawPlan(_Base):
     next_actions: list[str] = []
 
 
+class PromptGate(_Base):
+    passed: bool
+    score: float
+    missing: list[str] = []
+    suggestions: list[str] = []
+    rejection_reason: str = ""
+
+
 class StageCoherence(_Base):
     aligned: bool
     drift_detected: bool = False
@@ -205,16 +213,62 @@ class MemoryWriteback(_Base):
     recommendations: list[MemoryRecommendation] = []
 
 
+class MockedVsReal(_Base):
+    mocked: list[str] = []
+    real: list[str] = []
+
+
+class PRD(_Base):
+    product_definition: str
+    target_user: str
+    problem_statement: str
+    wedge: str
+    user_stories: list[str] = []
+    success_criteria: list[str] = []
+    kpis: list[str] = []
+    non_goals: list[str] = []
+    mvp_feature_set: list[str] = []
+    mocked_vs_real: MockedVsReal = MockedVsReal()
+    competitive_moat: str = ""
+
+    @field_validator("mocked_vs_real", mode="before")
+    @classmethod
+    def _coerce_mvr(cls, v: Any) -> Any:
+        return _coerce_json(v)
+
+
+class SystemSpec(_Base):
+    modules: list[str] = []
+    data_flow: list[str] = []
+    api_contracts: list[str] = []
+    dependencies: list[str] = []
+    environment_variables: list[str] = []
+    failure_states: list[str] = []
+
+
+class QACheck(_Base):
+    category: str
+    test: str
+    input: str = ""
+    expected_output: str = ""
+    pass_threshold: str = ""
+
+
 class OutputBundle(_Base):
-    prd: dict[str, Any]
-    system_spec: dict[str, Any] = {}
-    qa_checklist: list[Any] = []
+    prd: PRD
+    system_spec: SystemSpec = SystemSpec()
+    qa_checklist: list[QACheck] = []
     deployment_checklist: list[str] = []
 
     @field_validator("prd", "system_spec", mode="before")
     @classmethod
     def _coerce(cls, v: Any) -> Any:
-        return _coerce_json(v)
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return v
 
 
 class PlanBundle(_Base):
