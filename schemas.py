@@ -90,9 +90,27 @@ class Architecture(_Base):
     failure_points: list[str] = []
     memory_vs_runtime: dict[str, list[str]] = {"memory": [], "runtime": []}
 
-    @field_validator("module_responsibilities", "memory_vs_runtime", mode="before")
+    @field_validator("module_responsibilities", mode="before")
     @classmethod
-    def _coerce(cls, v: Any) -> Any:
+    def _coerce_mr(cls, v: Any) -> Any:
+        v = _coerce_json(v)
+        if isinstance(v, str):
+            result = {}
+            for line in v.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if ":" in line:
+                    key, _, val = line.partition(":")
+                    result[key.strip()] = val.strip()
+                else:
+                    result[line] = ""
+            return result
+        return v if isinstance(v, dict) else {}
+
+    @field_validator("memory_vs_runtime", mode="before")
+    @classmethod
+    def _coerce_mvr(cls, v: Any) -> Any:
         return _coerce_json(v)
 
 
