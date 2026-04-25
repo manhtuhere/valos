@@ -1,299 +1,405 @@
-"""Local judgment engine (shape-correct typed JSON) — server-side port of the HTML DEMO module.
+"""Brain stage functions — Claude API calls with tool_use forced emit.
 
-This is the same contract as the LLM prompts from the PRD, but implemented as
-pure Python so the backend runs end-to-end without an API key. Swap any stage
-for a real LLM call by plugging into brain.intent/reframe/... with the same
-return shapes.
+All stages use _call_stage which forces structured output via tool_use:
+- No JSON parsing, no fence stripping, no retry needed
+- system prompt cached via cache_control: ephemeral
+- Each stage uses the right model (Haiku for cheap classification, Sonnet for depth)
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
+import anthropic
+
 import schemas as S
-
-_STOP = {
-    "a","an","the","and","or","to","for","of","in","on","with","by","me","my",
-    "our","from","that","which","is","are","be","being","it","its","as","so",
-    "into","onto","up","down","just",
-}
+from config import get_settings
 
 
-def _tokens(s: str) -> list[str]:
-    return re.findall(r"[a-zA-Z0-9_]+", (s or "").lower())
-
-
-def _title_of(raw: str) -> str:
-    m = re.search(
-        r"\b(?:build|make|create|design|develop|ship|launch)\s+(?:me\s+)?(?:a|an|the)?\s*([^.!?\n]+?)(?:\s+(?:that|which|for|to|so|from)\b|[.!?\n]|$)",
-        raw, flags=re.IGNORECASE,
+def _call_stage(
+    system: str,
+    user: str,
+    schema: type,
+    *,
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int = 1024,
+) -> Any:
+    s = get_settings()
+    client = anthropic.Anthropic(api_key=s.anthropic_api_key)
+    kw: dict[str, Any] = dict(model=model or s.anthropic_model, max_tokens=max_tokens)
+    if temperature is not None:
+        kw["temperature"] = temperature
+    resp = client.messages.create(
+        **kw,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        tools=[{"name": "emit", "input_schema": schema.model_json_schema()}],
+        tool_choice={"type": "tool", "name": "emit"},
+        messages=[{"role": "user", "content": user}],
     )
-    t = (m.group(1) if m else raw[:80]).strip()
-    return re.sub(r"\s+", " ", t)
+    tool_block = next(b for b in resp.content if b.type == "tool_use")
+    return schema.model_validate(tool_block.input)
 
 
-def _keywords(raw: str, n: int = 6) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for t in _tokens(raw):
-        if t in _STOP or len(t) <= 2 or t in seen:
-            continue
-        seen.add(t)
-        out.append(t)
-        if len(out) >= n:
-            break
-    return out
+# --- Context threading helpers — one-line summaries for each stage ---
+
+def _ctx_intent(o: S.Intent) -> str:
+    return f"Intent: goal={o.core_goal!r}, domain={o.domain!r}, build={o.build_category!r}"
 
 
-def categorize(raw: str, ctx: str | None = None) -> str:
-    t = set(_tokens(f"{raw} {ctx or ''}"))
-    def has(*ks: str) -> bool: return any(k in t for k in ks)
-    if has("founder","os","operating","orchestrator","judgment","specs","spec","planning","wedge"):
-        return "founder_os"
-    if has("dashboard","analytics","metric","metrics","kpi","kpis","report","reports","chart","visualize"):
-        return "dashboard"
-    if has("sales","crm","deal","pipeline","outreach","lead","leads","prospect"):
-        return "sales"
-    if has("support","ticket","helpdesk","intercom","zendesk","customer"):
-        return "support"
-    if has("workflow","automation","automate","agent","agents"):
-        return "automation"
-    return "generic"
+def _ctx_reframe(o: S.Reframe) -> str:
+    return f"Reframe: wedge={o.wedge!r}, problem={o.problem_statement!r}"
 
 
-# --- Profiles (two filled, generic falls back to derived-from-prompt). ---
-
-_PROFILE_FOUNDER_OS = {
-    "core_goal": "turn raw founder prompts into production-grade specs, architecture, routing, and execution plans through a judgment-first pipeline",
-    "user_type": "startup founders and 0\u21921 builders",
-    "domain": "founder tooling / AI orchestration",
-    "build_category": "platform / operating system",
-    "ambiguities": [
-        "execution autonomy level for v1",
-        "which worker surfaces are wired (Manus, OpenClaw, code builder)",
-        "memory persistence target (local vs managed DB)",
-        "whether the critic can hard-block execution",
-    ],
-    "assumptions": [
-        "single-user v1",
-        "typed JSON at every module boundary",
-        "memory stored as typed tables, not a free-form vector blob",
-    ],
-    "problem_statement": "founders lose weeks translating vague prompts into production-grade plans; existing tools either act as personality chatbots or execute too early without wedge/scope discipline",
-    "wedge": "prompt \u2192 structured founder-grade plan, with a critic gate before any execution",
-    "success_definition": "user enters a vague build prompt and receives typed intent, reframed problem, scoped MVP, architecture, routing plan, execution queue, critic verdict, and output bundle in a single run",
-    "non_goals": [
-        "full autonomous build loop",
-        "multi-user collaboration",
-        "production deployment engine in v1",
-        "IDE / code-builder execution in v1",
-    ],
-    "must_have": [
-        "prompt-to-spec pipeline","problem reframing","MVP scoping","architecture generation",
-        "research + execution task generation","router with confidence + fallback","critic quality gate",
-        "typed memory retrieval","output bundle (PRD + system + routing + QA + deploy)",
-    ],
-    "should_have": ["memory writeback recommendations","editable routing decisions","revision loop after critic 'revise'"],
-    "defer": ["autonomous iteration loop","multi-project graph memory","real worker execution feedback","multi-user collaboration"],
-    "mock_ok": ["Manus connector","OpenClaw connector","actual execution results","deployment logs"],
-    "must_be_real": ["planning pipeline outputs","routing decisions","memory retrieval","critic evaluation","typed output bundle"],
-    "modules": ["Prompt Intake","Intent Interpreter","Problem Reframer","Scope Engine","Architecture Engine","Research Planner","Execution Planner","Router","Critic","Output Generator","Memory Manager"],
-    "module_resp": {
-        "Prompt Intake": "normalize raw prompt, assign request id, detect request type",
-        "Intent Interpreter": "convert raw prompt into structured intent with ambiguities + assumptions",
-        "Problem Reframer": "sharpen into problem / wedge / success / non-goals",
-        "Scope Engine": "produce must-have, should-have, defer, mock_ok, must_be_real",
-        "Architecture Engine": "modules, data flow, dependencies, failure points, memory vs runtime split",
-        "Research Planner": "emit specific, deliverable-keyed Manus research tasks",
-        "Execution Planner": "emit typed execution queue with owner_type, deps, acceptance criteria",
-        "Router": "route each work item with reason, confidence, fallback",
-        "Critic": "return approve | revise | reject + failures + fixes + strongest_part",
-        "Output Generator": "assemble founder-grade PRD + system spec + QA + deployment checklists",
-        "Memory Manager": "tag-scored retrieval; durable writeback recommendations only",
-    },
-    "data_flow": [
-        "raw_prompt \u2192 intake","intake + memory \u2192 intent","intent \u2192 reframed problem",
-        "reframed problem \u2192 scope","scope + reframed \u2192 architecture","architecture + scope \u2192 research plan",
-        "architecture + scope \u2192 execution plan","all prior \u2192 router","bundle \u2192 critic",
-        "critic approve \u2192 output generator","output \u2192 memory writeback recommendations",
-    ],
-    "dependencies": ["LLM provider (Claude Sonnet 4.6)","Postgres (typed memory)","optional: Manus API (discovery)","optional: OpenClaw shell (execution)"],
-    "failure_points": [
-        "prompt ambiguity","over-scoped MVP","bad routing decision (e.g., Manus for judgment)",
-        "low-quality worker output","memory contamination with transient details","critic gate bypassed",
-        "JSON extraction failure at module boundary",
-    ],
-    "memory_vs_runtime": {
-        "memory": ["founder_principles","routing_rules","approved_patterns","product_preferences","failure_lessons","project_state"],
-        "runtime": ["current request_id","stage outputs in-flight","critic verdict for this run","per-run retrieved context block"],
-    },
-    "research_seeds": [
-        ["catalogue 10 production-grade AI build-planning tools and surface their core loop","know what credible competitors look like so the wedge is defensible","web/product","comparison table with core flow, strengths, weaknesses, positioning"],
-        ["collect module patterns used by prompt-to-spec systems (Cursor Composer, Replit Agent, Anthropic Projects)","validate our module boundary choices against shipping systems","docs/architecture","typed module-pattern summary with diagrams"],
-        ["identify how competing tools separate judgment from execution","verify our four-way role split (Val Clone / Manus / OpenClaw / Critic) is the right cut","product analysis","routing taxonomy with confidence-policy comparison"],
-        ["survey typed-memory approaches in long-running agent systems","pick the right memory shape before writing any schema","docs/papers","trade-off matrix (typed tables vs vector vs graph) with recommendation"],
-        ["find examples of critic / quality-gate patterns in agent pipelines","design a critic that actually rejects shallow output","repos/docs","critic-pattern catalog with rejection rationales"],
-    ],
-    "execution_seeds": [
-        ["Scaffold Next.js app shell with dark theme and 11-stage pipeline UI","frontend",[],["app boots","route structure exists","theme tokens configured","pipeline visualization renders"],False],
-        ["Build FastAPI orchestrator service with POST /plan endpoint","backend",["e1"],["accepts raw prompt","returns typed planning bundle","logs stage latency"],False],
-        ["Implement Postgres schemas for 6 typed memory tables + seeds","data",[],["tables created","seed data loaded","retrieval queries indexed"],False],
-        ["Wire intent / reframe / scope / architecture modules with strict JSON extraction","backend",["e2"],["each module returns shape-correct JSON","retry on malformed output","per-module timeout"],False],
-        ["Implement router service with confidence + fallback policy","backend",["e4"],["routes emit confidence","routes < 0.75 fallback to val_clone_internal"],False],
-        ["Implement critic service evaluating the full bundle","backend",["e4"],["returns approve | revise | reject","surfaces failures + fixes + strongest_part"],False],
-        ["Stub Manus + OpenClaw connector services","backend",["e5"],["shape-correct fake responses","observable request/response logs"],True],
-        ["Add memory retrieval + writeback recommendation endpoints","backend",["e3"],["tag-scored retrieval with per-category caps","writeback returns recommendations, not auto-commits"],False],
-    ],
-    "qa": [
-        "every stage returns typed JSON matching its schema",
-        "critic rejects a deliberately shallow prompt",
-        "memory retrieval surfaces the right rows for a given prompt",
-        "routing emits confidence + fallback for every item",
-        "malformed LLM output triggers one retry with JSON-only reminder",
-        "pipeline runs end-to-end under 30s on a standard prompt",
-    ],
-    "deploy": [
-        "env config for LLM key + model","Postgres migrations applied","seed memory loaded",
-        "rate-limit + timeout policies on LLM calls","structured logs for stage latency",
-        "error reporting wired (Sentry or equivalent)","feature flag for demo vs real LLM mode",
-    ],
-    "critic_strong": "typed JSON at every module boundary with a real critic gate \u2014 judgment-first discipline is the moat",
-}
+def _ctx_scope(o: S.Scope) -> str:
+    must = ", ".join(o.must_have[:4])
+    return f"Scope: must_have=[{must}]"
 
 
-def _generic_profile(raw: str, ctx: str | None) -> dict[str, Any]:
-    t = _title_of(raw)
-    kws = _keywords(f"{raw} {ctx or ''}", 6)
-    t_low = t.lower()
-    return {
-        "core_goal": f"ship a working v1 of {t_low} that proves a single user loop",
-        "user_type": "internal operators / early users",
-        "domain": kws[0] if kws else "general tooling",
-        "build_category": "internal tool",
-        "ambiguities": ["primary user not fully specified","data source(s) not named","success metric unclear"],
-        "assumptions": ["single-user v1","mocked external data ok","dark web UI"],
-        "problem_statement": f"user articulates a need around {t_low} but the wedge, scope, and success metric aren't yet sharp",
-        "wedge": f"one clearly useful slice of {t_low} that a single user runs end-to-end",
-        "success_definition": "a realistic user reaches the main action of the product in under 60s on a seeded demo",
-        "non_goals": ["full platform generalization","multi-tenant admin in v1","enterprise SSO in v1"],
-        "must_have": [f"core user flow for {t_low}","seeded / mock data source","primary action","result view"],
-        "should_have": ["saved state","shareable URL","light analytics"],
-        "defer": ["admin console","billing","multi-tenant"],
-        "mock_ok": ["external integrations","downstream write-backs"],
-        "must_be_real": ["core user action","persistent state of a single run"],
-        "modules": ["Frontend App","Frontend State","API Service","Data Store","Integration Stubs","Observability"],
-        "module_resp": {
-            "Frontend App": "renders the user flow and primary action",
-            "Frontend State": "holds run state and optimistic updates",
-            "API Service": "exposes typed endpoints for the core action",
-            "Data Store": "persists a single run; seeded with mock data",
-            "Integration Stubs": "fake third-party calls with observable request/response",
-            "Observability": "structured logs and latency per request",
-        },
-        "data_flow": ["user action \u2192 frontend","frontend \u2192 api","api \u2192 data store","api \u2192 integration stub","response \u2192 frontend"],
-        "dependencies": ["web host","Postgres","LLM provider (optional)"],
-        "failure_points": [
-            "vague success metric","user cannot find primary action","integration stub diverges from real API",
-            "state not persisted across refresh",
-        ],
-        "memory_vs_runtime": {
-            "memory": ["product_preferences","approved_patterns"],
-            "runtime": ["current request id","seeded dataset for the run"],
-        },
-        "research_seeds": [
-            [f"catalogue 3-5 tools that solve {t_low} or adjacent","anchor the wedge against credible alternatives","web/product","comparison table + positioning cut"],
-            [f"identify the one task a user does most often inside {t_low}","shape the primary action","user interviews","ranked task list with frequency"],
-            [f"collect the top 2 data sources for {t_low}","decide mock vs real for v1","docs","source table with shape and refresh cadence"],
-        ],
-        "execution_seeds": [
-            ["Scaffold app shell with primary action on home screen","frontend",[],["app boots","primary action visible"],False],
-            ["Implement API endpoint for primary action","backend",["e1"],["returns typed response","logs latency"],False],
-            ["Seed data store with realistic rows","data",[],["10+ seeded rows","indexed on primary key"],False],
-            ["Wire frontend to API and persist a run","frontend",["e1","e2"],["submit \u2192 response round-trip","state persists on refresh"],False],
-            ["Instrument structured logs","observability",["e2"],["logs carry request id, latency"],False],
-            ["Stub one external integration","backend",["e2"],["shape-correct fake response","observable log"],True],
-        ],
-        "qa": [
-            "primary action completes in under 3s on seed data",
-            "malformed input is rejected with a typed error",
-            "frontend handles empty-state gracefully",
-            "logs include request id and latency",
-            "no unhandled exception on the happy path",
-        ],
-        "deploy": ["env config loaded","database seeded","health check passes","structured logs exported","feature flag for demo vs real mode"],
-        "critic_strong": "one clearly scoped user loop with typed JSON between frontend and backend",
-    }
+def _ctx_arch(o: S.Architecture) -> str:
+    mods = ", ".join(o.system_modules[:6])
+    return f"Architecture: modules=[{mods}]"
 
 
-def _resolve_profile(raw: str, ctx: str | None) -> dict[str, Any]:
-    cat = categorize(raw, ctx)
-    if cat == "founder_os":
-        p = dict(_PROFILE_FOUNDER_OS)
-        p["__category"] = "founder_os"
-        return p
-    g = _generic_profile(raw, ctx)
-    g["__category"] = cat
-    return g
+# --- System prompt constants (cached by Anthropic after first call) ---
+
+_SYS_INTENT = """You are the Intent Interpreter stage of Val OS — the planning engine for VALSEA, which builds the default speech understanding infrastructure for Southeast Asia.
+
+Single responsibility: convert a raw founder prompt into structured intent filtered through VALSEA's mission lens.
+
+VALSEA context (apply to every interpretation):
+- Mission: build the default layer for hyperlocalized SEA speech understanding (Speech → Meaning → Structured Output → Workflow Integration)
+- 5-layer model: Layer 1 Input | Layer 2 ASR (MERaLiON) | Layer 3 Semantic Layer (CORE) | Layer 4 Structured Output | Layer 5 Workflow Integration
+- B2B enterprise only — no consumer, no demo products
+- Compounding engine: Data → Better interpretation → Better outputs → More usage → More data
+- Drift check: cosmetic UX, general AI experiments without product tie-in, and non-compounding work are LOW priority
+
+Required output fields:
+- core_goal: precise one-sentence description — name which of the 5 layers this strengthens and for which enterprise user
+- user_type: enterprise buyer/operator (e.g., "call center QA manager", "enterprise sales ops team", "B2B CRM admin") — never consumer
+- domain: layer + vertical (e.g., "Semantic Layer / B2B CRM", "ASR integration / call center", "Output structuring / WhatsApp workflow")
+- build_category: artifact type (e.g., "semantic correction pipeline", "structured output API", "n8n workflow integration", "LangGraph orchestration layer", "data collection pipeline")
+- ambiguities: 3-5 things unclear enough to block implementation
+- assumptions: 3-5 reasonable assumptions to proceed
+- drift_risk: "none" | "low" | "high" — high if this primarily addresses cosmetic UX or non-compounding work
+
+Good: core_goal="build a Layer 3 semantic correction pipeline for Malay/English code-switched sales calls that outputs structured deal updates for HubSpot", user_type="enterprise sales ops team", domain="Semantic Layer / B2B CRM", build_category="structured output API", drift_risk="none"
+Shallow: core_goal="improve speech recognition", user_type="users", domain="AI", drift_risk="high"
+
+Call the `emit` tool with your answer."""
+
+_SYS_REFRAME = """You are the Problem Reframer stage of Val OS — the planning engine for VALSEA's SEA speech understanding infrastructure.
+
+Single responsibility: sharpen the prompt into a defensible wedge rooted in the specific failure mode of the VALSEA 5-layer stack.
+
+Diagnostic frame — identify which layer is breaking:
+- ASR errors? → problem is in Layer 2 (raw transcription quality)
+- Semantic misinterpretation? → problem is in Layer 3 (correction/structuring is wrong)
+- Output not usable by downstream workflow? → problem is in Layer 4/5 (output shape or integration missing)
+Always find the root layer, not the symptom.
+
+Required output fields:
+- problem_statement: 1-2 sentences on the exact enterprise pain, grounded in how real SEA business users suffer — name the language/domain, the failure mode, and the business cost
+- wedge: the single smallest slice that proves Layer 3 (semantic layer) value immediately — must name the language pair, the correction type, and the workflow it plugs into
+- success_definition: one sentence — what does "it worked" look like for the enterprise buyer after their first real call is processed?
+- non_goals: 3-5 things explicitly out of scope for v1 — must include "consumer use cases", "ASR model retraining" (unless that IS the task), and "cosmetic UI improvements"
+
+Good: problem_statement="Call center QA managers in Malaysia spend 3h/day manually re-reading transcripts because MERaLiON outputs raw Malay/English code-switched text with no structure — escalation patterns are invisible", wedge="a correction pipeline that takes a raw call transcript, identifies intent and sentiment per speaker turn, and outputs a structured JSON summary with escalation flag — integrated into the QA team's existing Google Sheets workflow via n8n"
+Shallow: wedge="make speech recognition better for SEA"
+
+Call the `emit` tool with your answer."""
+
+_SYS_SCOPE = """You are the Scope Engine stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: define a disciplined MVP scope that fixes the root-layer bottleneck without drift.
+
+VALSEA scope discipline:
+- The semantic layer (Layer 3) must ALWAYS be in must_be_real — it is the core value; never mock it
+- Workflow integration (Layer 5) belongs in must_have if the enterprise buyer's workflow is defined; defer otherwise
+- ASR (Layer 2) is mock_ok in v1 UNLESS the task is explicitly ASR improvement
+- Cosmetic UI, consumer features, and general-purpose AI experiments belong in defer or are excluded entirely
+- Each must_have must be traceable to the compounding engine: Data → Better interpretation → Better outputs → More usage → More data
+
+Required output fields:
+- must_have: 4-7 non-negotiable items; v1 has no enterprise value without these — anchor to the failing layer
+- should_have: 3-5 additions that increase stickiness or data flywheel but do not block launch
+- defer: 4-7 items explicitly pushed to v2+ with brief reason (never vague "future improvements")
+- mock_ok: components safely stubbed in v1 without losing semantic layer value
+- must_be_real: components that cannot be mocked — semantic correction, output schema, and any live enterprise integration core to the wedge
+
+Call the `emit` tool with your answer."""
+
+_SYS_ARCHITECT = """You are the Architecture Engine stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: produce a concrete module-level architecture mapped to the VALSEA 5-layer model.
+
+VALSEA stack (prefer these — name the actual tech):
+- Layer 2 ASR: MERaLiON (primary), Whisper (fallback)
+- Layer 3 Semantic: LangGraph for orchestration, Claude/GPT for interpretation and structuring
+- Layer 4 Output: typed JSON schemas, Pydantic models
+- Layer 5 Integration: n8n (client workflows), WhatsApp Business API, HubSpot, Google Sheets
+- Data layer: Supabase (structured), Pinecone/pgvector (vector/retrieval), asyncpg
+- Pipelines: DeepAgent for ingestion, custom Python workers
+- Deployment: Vercel serverless (Python + React), or FastAPI on Railway
+
+Required output fields:
+- system_modules: 6-10 named components, each prefixed with its layer (e.g., "L3:SemanticCorrector", "L4:OutputSchemaValidator", "L5:N8nWebhookAdapter")
+- module_responsibilities: dict mapping each module to its single responsibility (one sentence — name the tech)
+- data_flow: 6-10 steps, format "Source → Destination: what flows (data type/format)"
+- dependencies: specific libraries/services with version hints where relevant
+- failure_points: 5-8 specific failure modes, each with: what breaks, how it surfaces, how it's caught
+- memory_vs_runtime: {"memory": [things persisted across calls — correction rules, entity models, routing config], "runtime": [things ephemeral per-request — raw transcript, correction diff, session context]}
+
+Call the `emit` tool with your answer."""
+
+_SYS_RESEARCH = """You are the Research Planner stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: emit specific, deliverable-keyed discovery tasks for the Manus worker — only research that unblocks a real design decision.
+
+VALSEA research priorities (in order):
+1. Semantic layer gaps: what correction rules, entity models, or domain vocabularies are missing?
+2. Enterprise workflow integration: how do target buyers currently handle this pain (tool, format, frequency)?
+3. Competitive intelligence: who else is building for SEA speech, what are their weaknesses?
+4. Data sources: where can labeled SEA speech data be found or generated?
+— Do NOT research cosmetic UX patterns, general ASR benchmarks without SEA relevance, or consumer products.
+
+Required output fields:
+- research_tasks: 3-6 tasks, each with:
+  - task_id: "r1", "r2", etc.
+  - objective: exactly what to discover (1 sentence — name the language/domain/enterprise context)
+  - why_it_matters: which specific design decision or semantic rule this unblocks
+  - source_type: "web/product" | "docs" | "github" | "papers" | "enterprise-user-interviews" | "dataset-search"
+  - deliverable: exact output format Manus should return (e.g., "comparison table: tool, SEA language support, workflow integration, pricing, key weakness" or "list of 10 domain-specific Malay finance terms with English equivalents and common ASR errors")
+
+Call the `emit` tool with your answer."""
+
+_SYS_EXECUTION = """You are the Execution Planner stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: emit a typed, tool-routed execution queue following the VALSEA weekly loop.
+
+VALSEA execution loop (apply this thinking to every task set):
+1. Identify the bottleneck layer (ASR / semantic / output / integration)
+2. Fix root cause, not symptoms
+3. Capture every fix as a rule, dataset entry, or reusable logic component
+4. Deploy and observe on real SEA speech — not synthetic data
+
+VALSEA tool routing (use for owner_type):
+- "langgraph" — orchestration logic, multi-step semantic pipelines
+- "n8n" — client workflow integration (CRM, WhatsApp, Sheets connectors)
+- "supabase" — structured data storage, entity models, correction rule tables
+- "vector_db" — embedding ingestion, semantic search, retrieval pipelines
+- "deepagent" — data collection and ingestion pipelines
+- "backend" — FastAPI services, schema validation, Python workers
+- "infra" — Vercel/Railway deployment, env config, CI
+
+Required output fields:
+- execution_tasks: 5-10 tasks, each with:
+  - task_id: "e1", "e2", etc.
+  - title: imperative verb-first title under 60 chars
+  - owner_type: one of the tool types above
+  - depends_on: list of task_ids required first (empty list if none)
+  - acceptance_criteria: 2-4 specific, observable pass/fail criteria — must name the SEA language, domain, or enterprise workflow where applicable
+  - mockable: true ONLY for non-semantic-layer tasks — never mock the correction or structuring logic
+  - compounds_data: true if completing this task generates labeled data, correction rules, or routing improvements that feed the compounding engine
+
+Call the `emit` tool with your answer."""
+
+_SYS_ROUTER = """You are the Router stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: assign each work item to the correct worker using VALSEA's tool routing discipline.
+
+VALSEA worker roster (route to the right tool — no generalism):
+- val_clone_internal: judgment-heavy decisions — wedge strategy, architecture review, semantic layer design, anti-drift checks
+- manus: external discovery — competitive research, SEA speech dataset search, enterprise workflow mapping
+- deepagent: data pipelines — ingestion, labeling pipelines, batch processing, corpus collection
+- code_builder: system building — LangGraph graphs, FastAPI workers, Pydantic schemas, n8n webhook handlers, Supabase migrations
+- openclaw: operational execution — deployment steps, shell scripts, environment config, Vercel/Railway deploys
+- critic: quality gate — output evaluation, semantic rule review, integration testing spec
+- memory_manager: persistence — correction rule storage, routing rule writeback, Supabase/vector DB commits
+
+Routing rules:
+- Semantic layer work (correction, structuring, entity extraction) → code_builder or val_clone_internal (never manus)
+- Discovery about SEA markets, competitors, datasets → manus
+- Anything that generates labeled data or reusable rules → deepagent or code_builder with compounds_data=true
+- Deployment, infra, env config → openclaw
+- Review after semantic changes → critic
+
+Required output fields:
+- routes: one route per work item, each with:
+  - work_item: name/title of the task
+  - route_to: worker name from the list above
+  - reason: 1-sentence rationale — name the VALSEA tool routing rule that applies
+  - confidence: 0.0–1.0 (below 0.85 requires a fallback)
+  - fallback: alternative worker if primary fails, null if confidence >= 0.85
+
+Call the `emit` tool with your answer."""
+
+_SYS_CRITIC = """You are the Critic stage of Val OS — the quality gate for VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: evaluate the planning bundle against VALSEA's mission-critical criteria and return approve or revise.
+
+VALSEA scoring guide (start at 0.50):
++0.10 if the semantic layer (Layer 3) is in must_be_real and has at least 2 concrete must-have items
++0.08 if the wedge names a specific SEA language pair, domain, and enterprise workflow it plugs into
++0.07 if 6+ system modules are defined with layer prefixes (L2/L3/L4/L5)
++0.06 if 5+ execution tasks with correct tool routing (langgraph/n8n/supabase/deepagent/backend)
++0.05 if at least 1 task has compounds_data=true (feeds the data flywheel)
++0.04 if 5+ failure points with detection method
++0.03 if 3+ non-goals explicitly exclude cosmetic UI and consumer use cases
++0.02 if research tasks focus on SEA-specific data sources or enterprise workflows
+-0.15 if semantic layer is mock_ok or missing from scope entirely
+-0.12 if wedge is generic ("improve speech", "better AI") with no SEA language/domain specificity
+-0.10 if B2B enterprise buyer is not named or user_type is consumer
+-0.08 if drift_risk is "high" and no anti-drift rationale was given
+-0.08 if must-have has fewer than 4 or more than 8 items
+-0.12 if no failure points defined
+
+Required output fields:
+- status: "approve" if score >= 0.82, otherwise "revise" — do NOT use "reject"
+- score: float 0.0–1.0
+- failures: specific weaknesses (empty list if approve) — name the VALSEA criterion that failed
+- fixes: specific actionable fix for each failure — name which layer, tool, or rule to correct
+- strongest_part: 1 sentence on what the plan does best for VALSEA's mission
+
+Call the `emit` tool with your answer."""
+
+_SYS_OUTPUT = """You are the Output Generator stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: assemble a founder-grade output bundle optimized for enterprise B2B delivery and data flywheel compounding.
+
+Required output fields:
+- prd: dict with exactly these keys:
+    product_definition (str) — include the target SEA language(s), enterprise user, and which VALSEA layer this strengthens
+    target_user (str) — enterprise buyer role and company type (no consumers)
+    wedge (str) — specific language pair + domain + workflow integration target
+    success_criteria (list[str]) — 3-5 observable enterprise outcomes (e.g., "QA manager processes 100 calls/day with zero manual re-reading", "structured JSON output accepted by HubSpot webhook without transformation")
+    non_goals (list[str]) — must include "consumer use cases" and "cosmetic UI improvements"
+    mvp_feature_set (list[str]) — features anchored to Layer 3 semantic value first
+    mocked_vs_real (dict with "mocked": list[str] and "real": list[str]) — semantic layer always in "real"
+- system_spec: dict with exactly these keys:
+    modules (list[str]) — layer-prefixed (L2/L3/L4/L5)
+    data_flow (list[str]) — include data type at each step (raw audio, transcript, corrected text, structured JSON, webhook payload)
+    dependencies (list[str]) — VALSEA stack preferred: MERaLiON, LangGraph, n8n, Supabase, asyncpg, Claude API
+    failure_states (list[str]) — specific failure modes with detection method
+- qa_checklist: 5-8 testable QA checks with pass/fail criteria — at least 3 must test semantic layer accuracy on real SEA speech
+- deployment_checklist: 5-8 ordered steps — must include "commit correction rules to Supabase" and "verify n8n webhook end-to-end on live enterprise data"
+
+Call the `emit` tool with your answer."""
+
+_SYS_OPENCLAW = """You are OpenClaw, the operational execution planner for Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: convert a single VALSEA execution work item into a concrete, ordered implementation plan a developer can follow immediately using the VALSEA stack.
+
+VALSEA stack context:
+- Semantic pipelines: LangGraph (Python), Claude API (claude-sonnet-4-6), Pydantic schemas
+- Client workflow integrations: n8n webhook handlers, WhatsApp Business API, HubSpot/Google Sheets connectors
+- Data layer: Supabase (asyncpg), pgvector/Pinecone for embeddings
+- Ingestion/pipelines: DeepAgent, custom Python workers
+- Deployment: Vercel serverless (FastAPI + React), Railway for long-running workers
+- ASR: MERaLiON API, Whisper fallback
+
+Required output fields:
+- steps: 3-7 ordered implementation steps, each with:
+  - order: step number starting at 1
+  - action: imperative verb phrase (e.g., "scaffold", "implement", "wire", "configure", "ingest")
+  - target: specific file, module, service, or component (use layer prefix: L2/L3/L4/L5)
+  - detail: 1-2 sentences of concrete guidance — name the VALSEA library, pattern, or API call; include SEA language/domain context where relevant
+  - acceptance: one specific observable test (e.g., "send a 30-second Malay sales call recording, verify structured JSON output contains intent, entities, and escalation_flag fields")
+- estimated_effort: realistic estimate (e.g., "2h", "1 day", "3 days")
+- stack_decisions: 2-4 specific tech choices with rationale — prefer VALSEA-standard tools
+- risks: 2-4 specific implementation risks (code-switching edge cases, ASR confidence thresholds, n8n webhook timeouts) with early detection method
+- next_actions: 1-3 follow-on tasks — at least one should feed the data compounding engine
+
+Good: action="implement", target="L3:SemanticCorrector/malay_finance_rules.py", detail="Write LangGraph node that applies domain-specific correction rules for Malay finance terms (loaded from Supabase correction_rules table), maps common MERaLiON misrecognitions to canonical forms using fuzzy match + confidence threshold 0.85", acceptance="unit test with 20 held-out Malay finance call snippets achieves >= 90% correction accuracy"
+Shallow: action="implement correction", target="backend", detail="add semantic processing"
+
+Call the `emit` tool with your answer."""
+
+_SYS_MEMWB = """You are the Memory Writeback stage of Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: decide what from this run is worth persisting across future planning sessions.
+
+Write ONLY if at least one condition is true:
+1. Stable principle reinforced — a decision pattern that will apply to future VALSEA planning (e.g., "Layer 3 must always be in must_be_real")
+2. Reusable pattern approved — a semantic correction rule, routing rule, or architecture pattern validated by this run
+3. Valuable failure lesson discovered — a specific way the plan broke (vague wedge, wrong tool routing, drift) with the fix
+4. Confidence confirmed — an approach that was uncertain and proved correct (saves re-litigating the same question)
+5. Project milestone changed — a meaningful state change (new enterprise integration shipped, new language pair supported, data flywheel trigger)
+
+Do NOT write:
+- Transient task details or in-progress work
+- Generic insights derivable from the codebase
+- Anything that will be stale within a single sprint
+
+Memory types: product_preferences, routing_rules, approved_patterns, failure_lessons, project_state
+(never recommend writing to founder_principles — that is manual-only)
+
+Required output fields:
+- recommendations: 1-3 memory recommendations, each with:
+  - should_write: true only if at least one condition above is met AND confidence >= 0.75
+  - memory_type: one of the types above
+  - title: short title under 60 chars — name the SEA language, layer, or VALSEA principle if relevant
+  - content: 2-4 sentences of durable insight — specific enough to change a future decision
+  - tags: 2-4 tags (include layer tag: "L2", "L3", "L4", "L5"; language tag if applicable)
+  - confidence: 0.0–1.0
+  - justification: which of the 5 write conditions above is met and why
+
+Call the `emit` tool with your answer."""
 
 
-# --- Stage implementations. Signatures mirror the HTML DEMO module. ---
+# --- Stage functions ---
 
 def intent(raw: str, ctx: str | None) -> S.Intent:
-    p = _resolve_profile(raw, ctx)
-    return S.Intent(
-        core_goal=p["core_goal"], user_type=p["user_type"], domain=p["domain"],
-        build_category=p["build_category"], ambiguities=p["ambiguities"], assumptions=p["assumptions"],
-    )
+    s = get_settings()
+    user = f"Raw prompt: {raw}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_INTENT, user, S.Intent, model=s.haiku_model)
 
 
 def reframe(raw: str, ctx: str | None, intent_: S.Intent) -> S.Reframe:
-    p = _resolve_profile(raw, ctx)
-    return S.Reframe(
-        problem_statement=p["problem_statement"], wedge=p["wedge"],
-        success_definition=p["success_definition"], non_goals=p["non_goals"],
-    )
+    s = get_settings()
+    user = f"Raw prompt: {raw}\n\n{_ctx_intent(intent_)}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_REFRAME, user, S.Reframe, model=s.haiku_model)
 
 
 def scope(raw: str, ctx: str | None, intent_: S.Intent, reframe_: S.Reframe) -> S.Scope:
-    p = _resolve_profile(raw, ctx)
-    return S.Scope(
-        must_have=p["must_have"], should_have=p["should_have"], defer=p["defer"],
-        mock_ok=p["mock_ok"], must_be_real=p["must_be_real"],
+    user = f"Raw prompt: {raw}\n\n{_ctx_intent(intent_)}\n{_ctx_reframe(reframe_)}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_SCOPE, user, S.Scope, max_tokens=2048)
+
+
+def architect(
+    raw: str, ctx: str | None, intent_: S.Intent, reframe_: S.Reframe, scope_: S.Scope
+) -> S.Architecture:
+    user = (
+        f"Raw prompt: {raw}\n\n"
+        f"{_ctx_intent(intent_)}\n{_ctx_reframe(reframe_)}\n{_ctx_scope(scope_)}"
     )
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_ARCHITECT, user, S.Architecture, max_tokens=2048)
 
 
-def architect(raw: str, ctx: str | None, intent_: S.Intent, reframe_: S.Reframe, scope_: S.Scope) -> S.Architecture:
-    p = _resolve_profile(raw, ctx)
-    return S.Architecture(
-        system_modules=p["modules"], module_responsibilities=p["module_resp"],
-        data_flow=p["data_flow"], dependencies=p["dependencies"],
-        failure_points=p["failure_points"], memory_vs_runtime=p["memory_vs_runtime"],
+def research(
+    raw: str, ctx: str | None, reframe_: S.Reframe, scope_: S.Scope, arch: S.Architecture
+) -> S.Research:
+    user = (
+        f"Raw prompt: {raw}\n\n"
+        f"{_ctx_reframe(reframe_)}\n{_ctx_scope(scope_)}\n{_ctx_arch(arch)}"
     )
-
-
-def research(raw: str, ctx: str | None, reframe_: S.Reframe, scope_: S.Scope, arch: S.Architecture) -> S.Research:
-    p = _resolve_profile(raw, ctx)
-    tasks = [
-        S.ResearchTask(
-            task_id=f"r{i+1}", objective=row[0], why_it_matters=row[1],
-            source_type=row[2], deliverable=row[3],
-        )
-        for i, row in enumerate(p.get("research_seeds", []))
-    ]
-    return S.Research(research_tasks=tasks)
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_RESEARCH, user, S.Research, max_tokens=2048)
 
 
 def execution(raw: str, ctx: str | None, scope_: S.Scope, arch: S.Architecture) -> S.Execution:
-    p = _resolve_profile(raw, ctx)
-    tasks = [
-        S.ExecutionTask(
-            task_id=f"e{i+1}", title=row[0], owner_type=row[1],
-            depends_on=list(row[2] or []), acceptance_criteria=list(row[3] or []),
-            mockable=bool(row[4]),
-        )
-        for i, row in enumerate(p.get("execution_seeds", []))
-    ]
-    return S.Execution(execution_tasks=tasks)
+    user = f"Raw prompt: {raw}\n\n{_ctx_scope(scope_)}\n{_ctx_arch(arch)}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_EXECUTION, user, S.Execution, max_tokens=2048)
 
 
 def router(
@@ -303,95 +409,34 @@ def router(
     execution_: S.Execution,
     min_confidence: float = 0.75,
 ) -> S.RoutingPlan:
-    routes: list[S.Route] = []
-    # Research tasks -> manus
-    for r in research_.research_tasks:
-        routes.append(S.Route(
-            work_item=r.objective, route_to="manus",
-            reason="external discovery task", confidence=0.93, fallback=None,
-        ))
-    # Execution tasks -> code_builder or openclaw
-    codey_re = re.compile(r"scaffold|implement|wire|build|endpoint|schema|integration", re.IGNORECASE)
-    for e in execution_.execution_tasks:
-        codey = bool(codey_re.search(e.title))
-        route_to = "code_builder" if codey else "openclaw"
-        conf = 0.9 if codey else 0.92
-        routes.append(S.Route(
-            work_item=e.title, route_to=route_to,  # type: ignore[arg-type]
-            reason="multi-file real codebase change" if codey else "operational execution of approved task",
-            confidence=conf,
-            fallback="val_clone_internal" if conf < min_confidence else None,
-        ))
-    # Meta items
-    routes.append(S.Route(work_item="define MVP wedge", route_to="val_clone_internal",
-                         reason="judgment-heavy strategic decision", confidence=0.97, fallback=None))
-    routes.append(S.Route(work_item="stress-test architecture", route_to="critic",
-                         reason="quality gate before execution", confidence=0.94, fallback=None))
-    routes.append(S.Route(work_item="write durable lesson to memory", route_to="memory_manager",
-                         reason="durable continuity", confidence=0.9, fallback=None))
-    return S.RoutingPlan(routes=routes)
+    s = get_settings()
+    research_items = "\n".join(
+        f"  - {t.task_id}: {t.objective}" for t in research_.research_tasks
+    )
+    execution_items = "\n".join(
+        f"  - {t.task_id}: {t.title} [{t.owner_type}]" for t in execution_.execution_tasks
+    )
+    user = (
+        f"Work items to route:\n\n"
+        f"Research tasks:\n{research_items}\n\n"
+        f"Execution tasks:\n{execution_items}\n\n"
+        f"Strategic/meta items:\n"
+        f"  - define MVP wedge (judgment call)\n"
+        f"  - stress-test architecture (quality gate)\n"
+        f"  - write durable lesson to memory\n\n"
+        f"Minimum confidence threshold: {min_confidence} (items below this must have a fallback)\n\n"
+        f"{_ctx_scope(scope_)}\n{_ctx_arch(arch)}"
+    )
+    return _call_stage(_SYS_ROUTER, user, S.RoutingPlan, model=s.haiku_model)
 
 
 def critic(raw: str, ctx: str | None, bundle: dict[str, Any]) -> S.CriticVerdict:
-    """Heuristic quality gate.
-
-    Scores the planning bundle on shape (module count, scope size, failure
-    points, task counts, non-goals, routing) and then applies prompt-level
-    penalties so a shallow prompt can't ride a well-shaped generic profile to
-    an approve verdict.
-    """
-    p = _resolve_profile(raw, ctx)
-    b = bundle or {}
-    score = 0.55
-    arch = b.get("architecture", {}) or {}
-    sc = b.get("scope", {}) or {}
-    rs = b.get("research", {}) or {}
-    ex = b.get("execution", {}) or {}
-    rf = b.get("reframe", {}) or {}
-    rt = b.get("routing", {}) or {}
-    if len(arch.get("system_modules", []) or []) >= 6: score += 0.08
-    if 3 <= len(sc.get("must_have", []) or []) <= 7: score += 0.10
-    if len(arch.get("failure_points", []) or []) >= 4: score += 0.05
-    if len(ex.get("execution_tasks", []) or []) >= 5: score += 0.06
-    if len(rs.get("research_tasks", []) or []) >= 3: score += 0.04
-    if len(rf.get("non_goals", []) or []) >= 2: score += 0.03
-    if any((r or {}).get("route_to") == "code_builder" for r in (rt.get("routes", []) or [])): score += 0.02
-
-    # Prompt-level penalties: a well-shaped bundle built on top of a vague
-    # prompt should not get an approve verdict.
-    prompt_tokens = _tokens(raw)
-    signal_tokens = [t for t in prompt_tokens if t not in _STOP and len(t) > 2]
-    if len(signal_tokens) < 4:
-        score -= 0.20  # "build a thing" territory
-    elif len(signal_tokens) < 7:
-        score -= 0.10
-    if p.get("__category") == "generic":
-        score -= 0.15  # couldn't infer domain at all
-
-    score = max(0.0, min(0.96, score))
-
-    failures: list[str] = []
-    fixes: list[str] = []
-    if len(sc.get("must_have", []) or []) > 7:
-        failures.append("must-have is too broad for an MVP")
-        fixes.append("cut must-have down to 4-6 items; move the rest to should-have or defer")
-    if not (arch.get("failure_points") or []):
-        failures.append("no explicit failure states")
-        fixes.append("list failure points and how each is detected + handled")
-    if p.get("__category") == "generic":
-        failures.append("domain not clearly identified from prompt")
-        fixes.append("add 1-2 context lines to tighten intent and narrow the domain")
-    if len(signal_tokens) < 4:
-        failures.append("prompt is too short to plan against")
-        fixes.append("describe what the product does, who uses it, and what success looks like")
-    if not failures:
-        failures.append("memory writeback criteria could be tightened")
-        fixes.append("add an explicit confidence threshold before writing memory")
-
-    status = "approve" if score >= 0.82 else "revise" if score >= 0.60 else "reject"
-    return S.CriticVerdict(
-        status=status, score=round(score, 2), failures=failures, fixes=fixes,
-        strongest_part=p.get("critic_strong", "typed module boundaries make the pipeline debuggable"),
+    import json
+    user = f"Raw prompt: {raw}\n\nPlanning bundle:\n{json.dumps(bundle, indent=2)}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(
+        _SYS_CRITIC, user, S.CriticVerdict, temperature=0.1, max_tokens=1024
     )
 
 
@@ -403,51 +448,37 @@ def output(
     scope_: S.Scope,
     arch: S.Architecture,
 ) -> S.OutputBundle:
-    p = _resolve_profile(raw, ctx)
-    return S.OutputBundle(
-        prd={
-            "product_definition": f"MVP that solves: {reframe_.problem_statement}",
-            "target_user": intent_.user_type,
-            "wedge": reframe_.wedge,
-            "success_criteria": [reframe_.success_definition, *scope_.must_have[:3]],
-            "non_goals": reframe_.non_goals,
-            "mvp_feature_set": scope_.must_have,
-            "mocked_vs_real": {"mocked": scope_.mock_ok, "real": scope_.must_be_real},
-        },
-        system_spec={
-            "modules": arch.system_modules,
-            "data_flow": arch.data_flow,
-            "dependencies": arch.dependencies,
-            "failure_states": arch.failure_points,
-        },
-        qa_checklist=p["qa"],
-        deployment_checklist=p["deploy"],
+    user = (
+        f"Raw prompt: {raw}\n\n"
+        f"{_ctx_intent(intent_)}\n{_ctx_reframe(reframe_)}\n{_ctx_scope(scope_)}\n{_ctx_arch(arch)}\n\n"
+        f"Must-have: {', '.join(scope_.must_have)}\n"
+        f"Non-goals: {', '.join(reframe_.non_goals)}\n"
+        f"Modules: {', '.join(arch.system_modules)}\n"
+        f"Data flow: {'; '.join(arch.data_flow[:8])}\n"
+        f"Dependencies: {', '.join(arch.dependencies)}\n"
+        f"Failure points: {'; '.join(arch.failure_points[:6])}"
     )
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_OUTPUT, user, S.OutputBundle, max_tokens=4096)
+
+
+def openclaw_plan(work_item: str, ctx: str | None) -> S.OpenClawPlan:
+    user = f"Work item: {work_item}"
+    if ctx:
+        user += f"\n\nContext: {ctx}"
+    return _call_stage(_SYS_OPENCLAW, user, S.OpenClawPlan, max_tokens=2048)
 
 
 def memwb(critic_: S.CriticVerdict) -> S.MemoryWriteback:
-    recs: list[S.MemoryRecommendation] = []
-    if critic_.status == "approve":
-        recs.append(S.MemoryRecommendation(
-            should_write=True, memory_type="approved_patterns",
-            title="Judgment-first planning loop with typed module boundaries",
-            content="Intent \u2192 Reframe \u2192 Scope \u2192 Architecture \u2192 Research/Execution \u2192 Router \u2192 Critic \u2192 Output. Typed JSON at every boundary. Critic must gate output assembly.",
-            tags=["core_loop","planning","governance"], confidence=0.9,
-            justification="Loop held up end-to-end for this prompt and aligns with multiple founder principles.",
-        ))
-    if critic_.failures:
-        recs.append(S.MemoryRecommendation(
-            should_write=True, memory_type="failure_lessons",
-            title=critic_.failures[0],
-            content=f"Observed during this run: {critic_.failures[0]}. Fix: {(critic_.fixes or ['review scope + failure states.'])[0]}",
-            tags=["critic","quality"], confidence=0.75,
-            justification="Critic surfaced a real weakness worth remembering.",
-        ))
-    recs.append(S.MemoryRecommendation(
-        should_write=False, memory_type="product_preferences",
-        title="Defer: personalize stack per run",
-        content="Do not store per-run stack choices as preferences unless repeated across 3+ projects.",
-        tags=["governance","memory"], confidence=0.6,
-        justification="Transient details pollute memory; wait for a pattern before storing.",
-    ))
-    return S.MemoryWriteback(recommendations=recs)
+    s = get_settings()
+    user = (
+        f"Critic verdict:\n"
+        f"  status: {critic_.status}\n"
+        f"  score: {critic_.score}\n"
+        f"  strongest_part: {critic_.strongest_part}\n"
+        f"  failures: {'; '.join(critic_.failures) if critic_.failures else 'none'}\n"
+        f"  fixes: {'; '.join(critic_.fixes) if critic_.fixes else 'none'}\n\n"
+        f"Recommend what to persist. Only write if confidence >= {s.memwb_min_confidence}."
+    )
+    return _call_stage(_SYS_MEMWB, user, S.MemoryWriteback, model=s.haiku_model)

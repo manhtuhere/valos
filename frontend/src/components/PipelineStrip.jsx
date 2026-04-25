@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { STAGES } from "../data/stages.js";
-import { pretty } from "../lib/utils.js";
 import ArchFlow from "./ArchFlow.jsx";
 import ExecutionBoard from "./ExecutionBoard.jsx";
+import JsonView from "./JsonView.jsx";
 import ResearchCards from "./ResearchCards.jsx";
 
 function renderDetail(id, stageStates) {
@@ -11,11 +11,22 @@ function renderDetail(id, stageStates) {
   if (id === "architect") return <ArchFlow arch={s.output} />;
   if (id === "research")  return <ResearchCards research={s.output} />;
   if (id === "execution") return <ExecutionBoard execution={s.output} />;
-  return <pre>{pretty(s.output)}</pre>;
+  return <JsonView data={s.output} />;
 }
 
 export default function PipelineStrip({ stageStates, criticData }) {
   const [open, setOpen] = useState(null);
+  const stagesRef = useRef(null);
+
+  useEffect(() => {
+    if (!stagesRef.current) return;
+    const running = stagesRef.current.querySelector(".ps-stage.running");
+    if (running) {
+      const container = stagesRef.current;
+      const left = running.offsetLeft - container.offsetWidth / 2 + running.offsetWidth / 2;
+      container.scrollLeft = Math.max(0, left);
+    }
+  }, [stageStates]);
 
   function toggle(id) {
     const s = stageStates[id];
@@ -30,7 +41,7 @@ export default function PipelineStrip({ stageStates, criticData }) {
   return (
     <div className="ps-wrap">
       <div className="ps-bar">
-        <div className="ps-stages">
+        <div className="ps-stages" ref={stagesRef}>
           {STAGES.map((s, i) => {
             const state = stageStates[s.id]?.state || "pending";
             const isActive = open === s.id;

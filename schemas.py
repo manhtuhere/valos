@@ -5,9 +5,20 @@ fields as it evolves — the contract is the documented keys, not a hard lock.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _coerce_json(v: Any) -> Any:
+    """Coerce JSON-encoded strings to dicts/lists (Claude tool_use sometimes returns nested objects as strings)."""
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return v
 
 
 class _Base(BaseModel):
@@ -27,8 +38,10 @@ RouteTo = Literal[
 class PlanRequest(_Base):
     raw_prompt: str = Field(..., min_length=1)
     context: str | None = None
-    auto_revise: bool = True  # re-run stages automatically if critic returns 'revise'
-    dispatch_workers: bool = True  # call Manus / OpenClaw stubs for execution feedback
+    auto_revise: bool = True
+    dispatch_workers: bool = True
+    openclaw_base_url: str | None = None   # user's local OpenClaw instance URL
+    openclaw_gateway_token: str | None = None  # user's OpenClaw gateway token
 
 
 class ReviseRequest(_Base):
@@ -76,6 +89,11 @@ class Architecture(_Base):
     dependencies: list[str] = []
     failure_points: list[str] = []
     memory_vs_runtime: dict[str, list[str]] = {"memory": [], "runtime": []}
+
+    @field_validator("module_responsibilities", "memory_vs_runtime", mode="before")
+    @classmethod
+    def _coerce(cls, v: Any) -> Any:
+        return _coerce_json(v)
 
 
 class ResearchTask(_Base):
@@ -136,6 +154,22 @@ class MemoryContext(_Base):
     rows: list[MemoryRow] = []
 
 
+class OpenClawStep(_Base):
+    order: int
+    action: str
+    target: str
+    detail: str
+    acceptance: str
+
+
+class OpenClawPlan(_Base):
+    steps: list[OpenClawStep]
+    estimated_effort: str
+    stack_decisions: list[str] = []
+    risks: list[str] = []
+    next_actions: list[str] = []
+
+
 class WorkerResponse(_Base):
     worker: Literal["manus", "openclaw"]
     work_item: str
@@ -162,9 +196,14 @@ class MemoryWriteback(_Base):
 
 class OutputBundle(_Base):
     prd: dict[str, Any]
-    system_spec: dict[str, Any]
+    system_spec: dict[str, Any] = {}
     qa_checklist: list[str] = []
     deployment_checklist: list[str] = []
+
+    @field_validator("prd", "system_spec", mode="before")
+    @classmethod
+    def _coerce(cls, v: Any) -> Any:
+        return _coerce_json(v)
 
 
 class PlanBundle(_Base):

@@ -10,15 +10,17 @@ changes:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 import brain, memory
 from config import get_settings
@@ -51,6 +53,13 @@ api = APIRouter(prefix="/api")
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _sse(stage: str, data: dict, *, done: bool = False) -> str:
+    payload: dict[str, Any] = {"stage": stage, "output": data}
+    if done:
+        payload["done"] = True
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def _apply_critic_fixes_to_context(base_ctx: str | None, critic: CriticVerdict) -> str:
@@ -95,6 +104,8 @@ async def _run_pipeline(
     auto_revise: bool,
     dispatch: bool,
     starting_revisions: int = 0,
+    openclaw_url: str | None = None,
+    openclaw_token: str | None = None,
 ) -> PlanBundle:
     s = get_settings()
     t0 = time.monotonic()
@@ -107,32 +118,40 @@ async def _run_pipeline(
         log.warning("memory retrieve failed: %s (continuing with empty context)", e)
         mem_ctx = MemoryContext(rows=[])
 
-    intent_ = brain.intent(raw_prompt, ctx)
-    reframe_ = brain.reframe(raw_prompt, ctx, intent_)
-    scope_ = brain.scope(raw_prompt, ctx, intent_, reframe_)
-    arch = brain.architect(raw_prompt, ctx, intent_, reframe_, scope_)
-    research_ = brain.research(raw_prompt, ctx, reframe_, scope_, arch)
-    execution_ = brain.execution(raw_prompt, ctx, scope_, arch)
-    routing: RoutingPlan = brain.router(scope_, arch, research_, execution_, min_confidence=s.router_min_confidence)
+    intent_ = await asyncio.to_thread(brain.intent, raw_prompt, ctx)
+    reframe_ = await asyncio.to_thread(brain.reframe, raw_prompt, ctx, intent_)
+    scope_ = await asyncio.to_thread(brain.scope, raw_prompt, ctx, intent_, reframe_)
+    arch = await asyncio.to_thread(brain.architect, raw_prompt, ctx, intent_, reframe_, scope_)
+    research_, execution_ = await asyncio.gather(
+        asyncio.to_thread(brain.research, raw_prompt, ctx, reframe_, scope_, arch),
+        asyncio.to_thread(brain.execution, raw_prompt, ctx, scope_, arch),
+    )
+    routing: RoutingPlan = await asyncio.to_thread(
+        brain.router, scope_, arch, research_, execution_, min_confidence=s.router_min_confidence
+    )
 
     bundle_for_critic = {
         "architecture": arch.model_dump(), "scope": scope_.model_dump(),
         "research": research_.model_dump(), "execution": execution_.model_dump(),
         "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
     }
-    critic_ = brain.critic(raw_prompt, ctx, bundle_for_critic)
+    critic_ = await asyncio.to_thread(brain.critic, raw_prompt, ctx, bundle_for_critic)
 
     revisions = starting_revisions
     while auto_revise and critic_.status == "revise" and revisions < s.max_revisions:
         revisions += 1
         new_ctx = _apply_critic_fixes_to_context(ctx, critic_)
         log.info("revision %d/%d — re-running with critic fixes", revisions, s.max_revisions)
-        scope_ = brain.scope(raw_prompt, new_ctx, intent_, reframe_)
-        arch = brain.architect(raw_prompt, new_ctx, intent_, reframe_, scope_)
-        research_ = brain.research(raw_prompt, new_ctx, reframe_, scope_, arch)
-        execution_ = brain.execution(raw_prompt, new_ctx, scope_, arch)
-        routing = brain.router(scope_, arch, research_, execution_, min_confidence=s.router_min_confidence)
-        critic_ = brain.critic(raw_prompt, new_ctx, {
+        scope_ = await asyncio.to_thread(brain.scope, raw_prompt, new_ctx, intent_, reframe_)
+        arch = await asyncio.to_thread(brain.architect, raw_prompt, new_ctx, intent_, reframe_, scope_)
+        research_, execution_ = await asyncio.gather(
+            asyncio.to_thread(brain.research, raw_prompt, new_ctx, reframe_, scope_, arch),
+            asyncio.to_thread(brain.execution, raw_prompt, new_ctx, scope_, arch),
+        )
+        routing = await asyncio.to_thread(
+            brain.router, scope_, arch, research_, execution_, min_confidence=s.router_min_confidence
+        )
+        critic_ = await asyncio.to_thread(brain.critic, raw_prompt, new_ctx, {
             "architecture": arch.model_dump(), "scope": scope_.model_dump(),
             "research": research_.model_dump(), "execution": execution_.model_dump(),
             "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
@@ -141,18 +160,20 @@ async def _run_pipeline(
     worker_feedback: list[WorkerResponse] = []
     if dispatch and critic_.status in ("approve", "revise"):
         routes_json = [r.model_dump() for r in routing.routes]
-        worker_feedback = await dispatch_routes(routes_json, ctx)
+        worker_feedback = await dispatch_routes(
+            routes_json, ctx, openclaw_url=openclaw_url, openclaw_token=openclaw_token
+        )
         needs_rev = [w for w in worker_feedback if w.status == "needs_revision"]
         if needs_rev:
             notes = "; ".join(f"{w.worker}: {w.logs[0] if w.logs else 'needs_revision'}" for w in needs_rev)
-            critic_ = brain.critic(raw_prompt, f"{ctx or ''}\nWorker feedback: {notes}", {
+            critic_ = await asyncio.to_thread(brain.critic, raw_prompt, f"{ctx or ''}\nWorker feedback: {notes}", {
                 "architecture": arch.model_dump(), "scope": scope_.model_dump(),
                 "research": research_.model_dump(), "execution": execution_.model_dump(),
                 "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
             })
 
-    output_ = brain.output(raw_prompt, ctx, intent_, reframe_, scope_, arch)
-    memwb = brain.memwb(critic_)
+    output_ = await asyncio.to_thread(brain.output, raw_prompt, ctx, intent_, reframe_, scope_, arch)
+    memwb = await asyncio.to_thread(brain.memwb, critic_)
 
     bundle = PlanBundle(
         request_id=str(run_id),
@@ -170,7 +191,162 @@ async def _run_pipeline(
     return bundle
 
 
+async def _run_pipeline_stream(
+    raw_prompt: str,
+    ctx: str | None,
+    *,
+    auto_revise: bool,
+    dispatch: bool,
+    openclaw_url: str | None = None,
+    openclaw_token: str | None = None,
+) -> AsyncGenerator[str, None]:
+    s = get_settings()
+    t0 = time.monotonic()
+    run_id = uuid.uuid4()
+
+    intake = Intake(request_id=str(run_id), timestamp=_now_iso())
+    yield _sse("intake", intake.model_dump())
+
+    try:
+        mem_ctx: MemoryContext = await memory.retrieve(raw_prompt, ctx)
+    except Exception as e:
+        log.warning("memory retrieve failed: %s", e)
+        mem_ctx = MemoryContext(rows=[])
+    yield _sse("memory", mem_ctx.model_dump())
+
+    try:
+        intent_ = await asyncio.to_thread(brain.intent, raw_prompt, ctx)
+        yield _sse("intent", intent_.model_dump())
+
+        reframe_ = await asyncio.to_thread(brain.reframe, raw_prompt, ctx, intent_)
+        yield _sse("reframe", reframe_.model_dump())
+
+        scope_ = await asyncio.to_thread(brain.scope, raw_prompt, ctx, intent_, reframe_)
+        yield _sse("scope", scope_.model_dump())
+
+        arch = await asyncio.to_thread(brain.architect, raw_prompt, ctx, intent_, reframe_, scope_)
+        yield _sse("architect", arch.model_dump())
+
+        research_, execution_ = await asyncio.gather(
+            asyncio.to_thread(brain.research, raw_prompt, ctx, reframe_, scope_, arch),
+            asyncio.to_thread(brain.execution, raw_prompt, ctx, scope_, arch),
+        )
+        yield _sse("research", research_.model_dump())
+        yield _sse("execution", execution_.model_dump())
+
+        routing = await asyncio.to_thread(
+            brain.router, scope_, arch, research_, execution_, min_confidence=s.router_min_confidence
+        )
+        yield _sse("router", routing.model_dump())
+
+        bundle_for_critic = {
+            "architecture": arch.model_dump(), "scope": scope_.model_dump(),
+            "research": research_.model_dump(), "execution": execution_.model_dump(),
+            "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
+        }
+        critic_ = await asyncio.to_thread(brain.critic, raw_prompt, ctx, bundle_for_critic)
+        yield _sse("critic", critic_.model_dump())
+
+        revisions = 0
+        while auto_revise and critic_.status == "revise" and revisions < s.max_revisions:
+            revisions += 1
+            new_ctx = _apply_critic_fixes_to_context(ctx, critic_)
+            log.info("revision %d/%d — re-running with critic fixes", revisions, s.max_revisions)
+            scope_ = await asyncio.to_thread(brain.scope, raw_prompt, new_ctx, intent_, reframe_)
+            arch = await asyncio.to_thread(brain.architect, raw_prompt, new_ctx, intent_, reframe_, scope_)
+            research_, execution_ = await asyncio.gather(
+                asyncio.to_thread(brain.research, raw_prompt, new_ctx, reframe_, scope_, arch),
+                asyncio.to_thread(brain.execution, raw_prompt, new_ctx, scope_, arch),
+            )
+            routing = await asyncio.to_thread(
+                brain.router, scope_, arch, research_, execution_, min_confidence=s.router_min_confidence
+            )
+            critic_ = await asyncio.to_thread(brain.critic, raw_prompt, new_ctx, {
+                "architecture": arch.model_dump(), "scope": scope_.model_dump(),
+                "research": research_.model_dump(), "execution": execution_.model_dump(),
+                "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
+            })
+            yield _sse("scope", scope_.model_dump())
+            yield _sse("architect", arch.model_dump())
+            yield _sse("research", research_.model_dump())
+            yield _sse("execution", execution_.model_dump())
+            yield _sse("router", routing.model_dump())
+            yield _sse("critic", {**critic_.model_dump(), "revision": revisions})
+
+        worker_feedback: list[WorkerResponse] = []
+        if dispatch and critic_.status in ("approve", "revise"):
+            routes_json = [r.model_dump() for r in routing.routes]
+            worker_results = await dispatch_routes(
+                routes_json, ctx, openclaw_url=openclaw_url, openclaw_token=openclaw_token
+            )
+            for wr in worker_results:
+                worker_feedback.append(wr)
+                yield _sse("worker", wr.model_dump())
+            needs_rev = [w for w in worker_feedback if w.status == "needs_revision"]
+            if needs_rev:
+                notes = "; ".join(
+                    f"{w.worker}: {w.logs[0] if w.logs else 'needs_revision'}" for w in needs_rev
+                )
+                critic_ = await asyncio.to_thread(brain.critic, raw_prompt, f"{ctx or ''}\nWorker feedback: {notes}", {
+                    "architecture": arch.model_dump(), "scope": scope_.model_dump(),
+                    "research": research_.model_dump(), "execution": execution_.model_dump(),
+                    "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
+                })
+                yield _sse("critic", {**critic_.model_dump(), "revision": revisions})
+
+        output_ = await asyncio.to_thread(brain.output, raw_prompt, ctx, intent_, reframe_, scope_, arch)
+        yield _sse("output", output_.model_dump())
+
+        memwb_ = await asyncio.to_thread(brain.memwb, critic_)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        bundle = PlanBundle(
+            request_id=str(run_id), intake=intake, memory=mem_ctx,
+            intent=intent_, reframe=reframe_, scope=scope_, architecture=arch,
+            research=research_, execution=execution_, routing=routing, critic=critic_,
+            worker_feedback=worker_feedback, output=output_, memory_writeback=memwb_,
+            revisions=revisions, latency_ms=latency_ms,
+        )
+        await _persist_run(raw_prompt, ctx, bundle)
+        yield _sse("memwb", memwb_.model_dump(), done=True)
+
+    except Exception as e:
+        log.exception("pipeline stage failed")
+        yield f"data: {json.dumps({'error': f'{type(e).__name__}: {e}'})}\n\n"
+
+
 # --- /api routes ------------------------------------------------------------
+
+@api.get("/openclaw/ping")
+async def openclaw_ping(url: str, token: str = "") -> dict[str, Any]:
+    """Lightweight connectivity + auth check — does NOT send any execution prompt."""
+    import time
+    import httpx
+    t0 = time.monotonic()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    probes = ["/healthz", "/health", "/api/health", "/"]
+    last_err: str | None = None
+    for path in probes:
+        try:
+            async with httpx.AsyncClient(base_url=url, timeout=5.0) as c:
+                r = await c.get(path, headers=headers)
+            latency = int((time.monotonic() - t0) * 1000)
+            if r.status_code == 401 or r.status_code == 403:
+                return {"ok": False, "status": r.status_code, "latency_ms": latency,
+                        "detail": "auth failed — check your gateway token"}
+            return {"ok": True, "status": r.status_code, "latency_ms": latency,
+                    "detail": f"reachable ({path})"}
+        except httpx.ConnectError:
+            last_err = "connection refused"
+            break
+        except httpx.TimeoutException:
+            last_err = "timed out after 5s"
+            break
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+    latency = int((time.monotonic() - t0) * 1000)
+    return {"ok": False, "status": None, "latency_ms": latency, "detail": last_err or "unreachable"}
+
 
 @api.get("/healthz")
 async def healthz() -> dict[str, Any]:
@@ -196,16 +372,17 @@ async def healthz() -> dict[str, Any]:
     }
 
 
-@api.post("/plan", response_model=PlanBundle)
-async def plan(req: PlanRequest) -> PlanBundle:
-    try:
-        return await _run_pipeline(
+@api.post("/plan")
+async def plan(req: PlanRequest) -> StreamingResponse:
+    return StreamingResponse(
+        _run_pipeline_stream(
             req.raw_prompt, req.context,
             auto_revise=req.auto_revise, dispatch=req.dispatch_workers,
-        )
-    except Exception as e:
-        log.exception("plan failed")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+            openclaw_url=req.openclaw_base_url, openclaw_token=req.openclaw_gateway_token,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @api.post("/plan/revise", response_model=PlanBundle)

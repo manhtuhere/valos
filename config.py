@@ -30,6 +30,7 @@ class Settings:
     database_requires_ssl: bool
     manus_base_url: str
     openclaw_base_url: str
+    openclaw_gateway_token: str | None
     worker_mode: str  # "inline" or "http"
     worker_timeout_seconds: float
     router_min_confidence: float
@@ -37,6 +38,7 @@ class Settings:
     memwb_min_confidence: float
     anthropic_api_key: str | None
     anthropic_model: str
+    haiku_model: str
     enable_persist_runs: bool
 
 
@@ -50,6 +52,7 @@ def _truthy(val: str | None, default: bool = False) -> bool:
 def get_settings() -> Settings:
     if _HAS_DOTENV:
         load_dotenv()
+        load_dotenv(".env.local", override=True)
 
     # Default to inline workers on Vercel (VERCEL env var is set by the platform).
     is_vercel = bool(os.getenv("VERCEL"))
@@ -66,14 +69,16 @@ def get_settings() -> Settings:
         ),
         database_requires_ssl=_truthy(os.getenv("DATABASE_URL_REQUIRES_SSL"), default_ssl),
         manus_base_url=os.getenv("MANUS_BASE_URL", "http://localhost:8081"),
-        openclaw_base_url=os.getenv("OPENCLAW_BASE_URL", "http://localhost:8082"),
+        openclaw_base_url=os.getenv("OPENCLAW_BASE_URL", "http://localhost:18789"),
+        openclaw_gateway_token=os.getenv("OPENCLAW_GATEWAY_TOKEN"),
         worker_mode=os.getenv("WORKER_MODE", default_worker_mode).strip().lower(),
         worker_timeout_seconds=float(os.getenv("WORKER_TIMEOUT_SECONDS", "15")),
         router_min_confidence=float(os.getenv("ROUTER_MIN_CONFIDENCE", "0.75")),
         max_revisions=int(os.getenv("MAX_REVISIONS", "2")),
         memwb_min_confidence=float(os.getenv("MEMWB_MIN_CONFIDENCE", "0.75")),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+        anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+        haiku_model=os.getenv("HAIKU_MODEL", "claude-haiku-4-5-20251001"),
         # On serverless, writing plan_runs on every request wastes the only
         # DB connection of the invocation. Off by default on Vercel.
         enable_persist_runs=_truthy(os.getenv("ENABLE_PERSIST_RUNS"), not is_vercel),

@@ -694,4 +694,42 @@ export const DEMO = {
     });
     return { recommendations: recs };
   },
+
+  async workers(routing) {
+    await delay(180);
+    const results = [];
+    for (const r of routing?.routes || []) {
+      if (r.route_to !== "openclaw" && r.route_to !== "manus") continue;
+      await delay(60);
+      const isManus = r.route_to === "manus";
+      const lw = (r.work_item || "").toLowerCase();
+      const steps = /scaffold|create/.test(lw)
+        ? ["create directory tree", "write config files", "install deps", "smoke-run"]
+        : /implement|wire|build/.test(lw)
+        ? ["read target files", "apply edits", "run lint", "run tests"]
+        : /schema|migration/.test(lw)
+        ? ["read schema", "author migration", "dry-run apply", "rollback plan"]
+        : ["parse work item", "run action", "verify acceptance", "emit artifact"];
+      const roll = Math.random();
+      const status = roll < 0.7 ? "ok" : roll < 0.85 ? "partial" : "needs_revision";
+      const done = status === "ok" ? steps : steps.slice(0, -1);
+      results.push({
+        worker: isManus ? "manus" : "openclaw",
+        work_item: r.work_item,
+        status,
+        artifact: isManus
+          ? { type: "summary", key_findings: 3 }
+          : { type: "execution_report", steps, completed: done },
+        logs: [
+          `demo ${r.route_to} · ${steps.length} steps planned`,
+          ...done.map((s) => `step ok: ${s}`),
+          ...(status === "partial" ? [`step blocked: ${steps[steps.length - 1]}`] : []),
+          ...(status === "needs_revision" ? ["acceptance criteria not met on first pass"] : []),
+        ],
+        next_actions: status === "ok" ? [] : ["re-run with more context"],
+        latency_ms: 120 + Math.floor(Math.random() * 300),
+      });
+    }
+    return results;
+  },
 };

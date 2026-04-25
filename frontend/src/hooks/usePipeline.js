@@ -2,7 +2,6 @@ import { useCallback, useRef } from "react";
 import { STAGES } from "../data/stages.js";
 import { DEMO } from "../lib/demo.js";
 import { retrieveMemory } from "../lib/memRetrieval.js";
-import { callBackendPlan } from "../lib/backendApi.js";
 import { uid, nowIso, pretty } from "../lib/utils.js";
 
 const MAX_REVISIONS = 2;
@@ -28,6 +27,8 @@ export function usePipeline({
   apiKey,
   model,
   backendUrl,
+  openclawUrl,
+  openclawToken,
 }) {
   // Keep a live ref to revisions count for the loop
   const revisionsRef = useRef(0);
@@ -89,6 +90,91 @@ export function usePipeline({
   }
 
   // -----------------------------------------------------------------------
+  // Backend SSE streaming pipeline
+  // -----------------------------------------------------------------------
+
+  async function runBackend(raw, ctx) {
+    const body = {
+      raw_prompt: raw,
+      context: ctx,
+      auto_revise: autoRevise,
+      dispatch_workers: true,
+    };
+    if (openclawToken) {
+      body.openclaw_base_url = openclawUrl || "http://localhost:18789";
+      body.openclaw_gateway_token = openclawToken;
+    }
+    const resp = await fetch(`${backendUrl}/api/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    const acc = {};
+    const workers = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+
+        if (event.error) {
+          throw new Error(event.error);
+        }
+
+        const stage = event.stage;
+        acc[stage] = event.output;
+
+        if (stage === "memwb") {
+          stageUpdate("output", "done", {
+            output: {
+              output: acc.output,
+              memory_writeback: event.output,
+              worker_feedback: workers,
+            },
+          });
+        } else if (stage === "worker") {
+          workers.push(event.output);
+        } else if (stage === "critic" && event.output.revision !== undefined) {
+          stageUpdate("critic", "done", { output: event.output });
+          revisionsRef.current = event.output.revision;
+          setRevisions(event.output.revision);
+        } else {
+          stageUpdate(stage, "done", { output: event.output });
+        }
+
+        if (event.done) {
+          const bundle = {
+            output: acc.output,
+            routing: acc.router,
+            scope: acc.scope,
+            architect: acc.architect,
+            execution: acc.execution,
+            memory_writeback: acc.memwb,
+            worker_feedback: workers,
+          };
+          setBundle(bundle);
+          setRetrievedIds(new Set((acc.memory?.rows || []).map((r) => r.id)));
+          const c = acc.critic;
+          if (c) {
+            setMetrics((m) => ({ ...m, criticVerdict: `${c.status} · ${c.score}` }));
+          }
+          return;
+        }
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Local (demo / real-api) pipeline
   // -----------------------------------------------------------------------
 
@@ -144,6 +230,9 @@ export function usePipeline({
       () => callClaude({ system: "You are the Router.", user: `Tasks: research + execution + meta` })
     );
 
+    // 09b Worker dispatch (demo — no real calls)
+    const workerFeedback = await DEMO.workers(routing);
+
     // 10 Critic (with optional revision loop)
     let critic = await runStage(
       "critic",
@@ -195,7 +284,7 @@ export function usePipeline({
     const memwb = await DEMO.memwb(critic);
     stageUpdate("output", "done", { ms: 8, output: { output, memory_writeback: memwb } });
 
-    const bundle = { output, routing: revisedRouting, scope: revisedScope, architect: revisedArch, memory_writeback: memwb, worker_feedback: [] };
+    const bundle = { output, routing: revisedRouting, scope: revisedScope, architect: revisedArch, execution: revisedExecution, memory_writeback: memwb, worker_feedback: workerFeedback };
     setBundle(bundle);
     return { bundle, critic };
   }
@@ -228,44 +317,7 @@ export function usePipeline({
       const t0 = Date.now();
       try {
         if (backendMode) {
-          stageUpdate("intake", "running");
-          const data = await callBackendPlan(raw, ctx, autoRevise, backendUrl);
-          const map = {
-            intake: data.intake,
-            memory: data.memory,
-            intent: data.intent,
-            reframe: data.reframe,
-            scope: data.scope,
-            architect: data.architecture,
-            research: data.research,
-            execution: data.execution,
-            router: data.routing,
-            critic: data.critic,
-            output: { output: data.output, memory_writeback: data.memory_writeback, worker_feedback: data.worker_feedback },
-          };
-          const perStageMs = Math.round((data.latency_ms || 0) / 11);
-          const newStates = {};
-          for (const id of Object.keys(map)) {
-            newStates[id] = { state: "done", output: map[id], ms: perStageMs, error: null };
-          }
-          setStageStates(newStates);
-
-          const bundle = {
-            output: data.output,
-            routing: data.routing,
-            scope: data.scope,
-            architect: data.architecture,
-            memory_writeback: data.memory_writeback,
-            worker_feedback: data.worker_feedback,
-          };
-          setBundle(bundle);
-          revisionsRef.current = data.revisions || 0;
-          setRevisions(revisionsRef.current);
-          setRetrievedIds(new Set((data.memory?.rows || []).map((r) => r.id)));
-          setMetrics((m) => ({
-            ...m,
-            criticVerdict: data.critic ? `${data.critic.status} · ${data.critic.score}` : "—",
-          }));
+          await runBackend(raw, ctx);
         } else {
           const { critic } = await runLocalPipeline(raw, ctx);
           setMetrics((m) => ({
@@ -318,7 +370,7 @@ export function usePipeline({
         output:    { ...prev.output,    state: "done", output: { output, memory_writeback: memwb }, ms: 0, error: null },
       }));
 
-      const bundle = { output, routing, scope, architect: arch, memory_writeback: memwb, worker_feedback: [] };
+      const bundle = { output, routing, scope, architect: arch, execution, memory_writeback: memwb, worker_feedback: [] };
       setBundle(bundle);
       setMetrics((m) => ({
         ...m,

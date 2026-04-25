@@ -1,6 +1,7 @@
+import { useState } from "react";
 import PrdView from "./PrdView.jsx";
 import RoutingTable from "./RoutingTable.jsx";
-import ScopeMap from "./ScopeMap.jsx";
+import ScopeGrid from "./ScopeGrid.jsx";
 import SystemGraph from "./SystemGraph.jsx";
 import WorkerCards from "./WorkerCards.jsx";
 
@@ -31,10 +32,10 @@ function renderContent(activeTab, bundle) {
   const o = bundle.output || {};
 
   if (activeTab === "prd")     return <PrdView prd={o.prd} />;
-  if (activeTab === "scope")   return <ScopeMap scope={bundle.scope} />;
+  if (activeTab === "scope")   return <ScopeGrid scope={bundle.scope} />;
   if (activeTab === "system")  return <SystemGraph arch={bundle.architect} />;
   if (activeTab === "routing") return <RoutingTable routing={bundle.routing} />;
-  if (activeTab === "workers") return <WorkerCards workers={bundle.worker_feedback} />;
+  if (activeTab === "workers") return <WorkerCards workers={bundle.worker_feedback} execution={bundle.execution} />;
 
   if (activeTab === "qa") {
     const items = o.qa_checklist || [];
@@ -93,6 +94,9 @@ const MAX_REVISIONS = 2;
 
 export default function OutputPanel({ bundle, activeTab, setActiveTab, criticData, onReviseAndRerun, revisions }) {
   const hasBundle = bundle && Object.keys(bundle).length > 0;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const activeLabel = TABS.find((t) => t.id === activeTab)?.label ?? activeTab;
 
   return (
     <section className="panel output-panel">
@@ -110,16 +114,41 @@ export default function OutputPanel({ bundle, activeTab, setActiveTab, criticDat
           ))}
         </div>
 
-        {criticData?.status === "revise" && revisions < MAX_REVISIONS && (
-          <button className="btn warn output-revise-btn" onClick={onReviseAndRerun}>
-            Revise &amp; re-run ({revisions + 1}/{MAX_REVISIONS})
-          </button>
-        )}
+        <div className="output-tab-actions">
+          {hasBundle && (
+            <button
+              className="panel-expand-btn"
+              onClick={() => setDrawerOpen(true)}
+              title="Expand panel"
+            >
+              ⤢
+            </button>
+          )}
+          {criticData?.status === "revise" && revisions < MAX_REVISIONS && (
+            <button className="btn warn output-revise-btn" onClick={onReviseAndRerun}>
+              Revise &amp; re-run ({revisions + 1}/{MAX_REVISIONS})
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bundle-body">
         {renderContent(activeTab, bundle)}
       </div>
+
+      {drawerOpen && (
+        <div className="output-drawer-backdrop" onClick={() => setDrawerOpen(false)}>
+          <div className="output-drawer" role="dialog" aria-label={activeLabel} onClick={(e) => e.stopPropagation()}>
+            <div className="output-drawer-header">
+              <span className="output-drawer-title">{activeLabel}</span>
+              <button className="output-drawer-close" onClick={() => setDrawerOpen(false)}>✕</button>
+            </div>
+            <div className="output-drawer-body">
+              {renderContent(activeTab, bundle)}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

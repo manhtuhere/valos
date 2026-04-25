@@ -1,5 +1,17 @@
+import { useState } from "react";
+
 function Chip({ label }) {
-  return <span className="scope-chip">{label}</span>;
+  const [expanded, setExpanded] = useState(false);
+  const long = label.length > 28;
+  return (
+    <span
+      className={`scope-chip${long ? " truncatable" : ""}${expanded ? " expanded" : ""}`}
+      onClick={() => long && setExpanded((v) => !v)}
+      title={long && !expanded ? label : undefined}
+    >
+      {label}
+    </span>
+  );
 }
 
 function Zone({ title, items, className }) {

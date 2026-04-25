@@ -5,12 +5,16 @@ export default function Header({
   setBackendMode,
   autoRevise,
   setAutoRevise,
+  dispatchWorkers,
+  setDispatchWorkers,
   apiKey,
   setApiKey,
   model,
   setModel,
   backendUrl,
   setBackendUrl,
+  onOpenSettings,
+  hasOpenclawToken,
 }) {
   const realApiVisible = !demoMode && !backendMode;
 
@@ -69,14 +73,23 @@ export default function Header({
       )}
 
       {backendMode && (
-        <div className="field">
-          <span>orchestrator</span>
-          <input
-            style={{ width: 160 }}
-            value={backendUrl}
-            onChange={(e) => setBackendUrl(e.target.value)}
-          />
-        </div>
+        <>
+          <div className="field">
+            <span>orchestrator</span>
+            <input
+              style={{ width: 160 }}
+              value={backendUrl}
+              onChange={(e) => setBackendUrl(e.target.value)}
+            />
+          </div>
+          <button
+            className={`settings-btn${hasOpenclawToken ? " active" : ""}`}
+            onClick={onOpenSettings}
+            title={hasOpenclawToken ? "OpenClaw configured" : "Configure OpenClaw worker"}
+          >
+            ⚙
+          </button>
+        </>
       )}
     </header>
   );

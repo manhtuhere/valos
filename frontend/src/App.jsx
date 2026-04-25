@@ -5,6 +5,7 @@ import { STAGES } from "./data/stages.js";
 import { usePipeline } from "./hooks/usePipeline.js";
 
 import Header from "./components/Header.jsx";
+import SettingsModal from "./components/SettingsModal.jsx";
 import IntakePanel from "./components/IntakePanel.jsx";
 import PipelineStrip from "./components/PipelineStrip.jsx";
 import OutputPanel from "./components/OutputPanel.jsx";
@@ -43,6 +44,16 @@ export default function App() {
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("claude-sonnet-4-5");
   const [backendUrl, setBackendUrl] = useState("http://localhost:8080");
+  const [openclawUrl, setOpenclawUrl] = useState(
+    () => localStorage.getItem("openclaw_url") || "http://localhost:18789"
+  );
+  const [openclawToken, setOpenclawToken] = useState(
+    () => localStorage.getItem("openclaw_token") || ""
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useEffect(() => { localStorage.setItem("openclaw_url", openclawUrl); }, [openclawUrl]);
+  useEffect(() => { localStorage.setItem("openclaw_token", openclawToken); }, [openclawToken]);
 
   const [stageStates, setStageStates] = useState(initStageStates);
   const [bundle, setBundle] = useState({});
@@ -70,6 +81,7 @@ export default function App() {
   const { runPipeline, reviseAndRerun, resetRun } = usePipeline({
     setStageStates, setBundle, setRevisions, setRetrievedIds, setMetrics,
     demoMode, backendMode, autoRevise, apiKey, model, backendUrl,
+    openclawUrl, openclawToken,
   });
 
   async function handleRun() {
@@ -105,6 +117,15 @@ export default function App() {
         apiKey={apiKey} setApiKey={setApiKey}
         model={model} setModel={setModel}
         backendUrl={backendUrl} setBackendUrl={setBackendUrl}
+        onOpenSettings={() => setSettingsOpen(true)}
+        hasOpenclawToken={!!openclawToken}
+      />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        openclawUrl={openclawUrl} setOpenclawUrl={setOpenclawUrl}
+        openclawToken={openclawToken} setOpenclawToken={setOpenclawToken}
+        backendUrl={backendUrl}
       />
 
       <main>
