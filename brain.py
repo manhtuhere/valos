@@ -60,6 +60,25 @@ def _ctx_arch(o: S.Architecture) -> str:
     return f"Architecture: modules=[{mods}]"
 
 
+def _ctx_research(o: S.Research) -> str:
+    tasks = ", ".join(t.task_id for t in o.research_tasks[:4])
+    return f"Research: tasks=[{tasks}]"
+
+
+def _ctx_execution(o: S.Execution) -> str:
+    items = ", ".join(f"{t.task_id}:{t.owner_type}" for t in o.execution_tasks[:5])
+    return f"Execution: tasks=[{items}]"
+
+
+def _ctx_routing(o: S.RoutingPlan) -> str:
+    routes = ", ".join(f"{r.work_item[:20]}→{r.route_to}" for r in o.routes[:4])
+    return f"Routing: [{routes}]"
+
+
+def _ctx_critic(o: S.CriticVerdict) -> str:
+    return f"Critic: status={o.status}, score={o.score:.2f}"
+
+
 # --- System prompt constants (cached by Anthropic after first call) ---
 
 _SYS_INTENT = """You are the Intent Interpreter stage of Val OS — the planning engine for VALSEA, which builds the default speech understanding infrastructure for Southeast Asia.
@@ -264,53 +283,106 @@ Call the `emit` tool with your answer."""
 
 _SYS_OUTPUT = """You are the Output Generator stage of Val OS — VALSEA's speech understanding infrastructure planner.
 
-Single responsibility: assemble a founder-grade output bundle optimized for enterprise B2B delivery and data flywheel compounding.
+Single responsibility: assemble a founder-grade output bundle that a VALSEA enterprise sales engineer can hand directly to a buyer's CTO or IT lead.
 
 Required output fields:
+
 - prd: dict with exactly these keys:
-    product_definition (str) — include the target SEA language(s), enterprise user, and which VALSEA layer this strengthens
-    target_user (str) — enterprise buyer role and company type (no consumers)
-    wedge (str) — specific language pair + domain + workflow integration target
-    success_criteria (list[str]) — 3-5 observable enterprise outcomes (e.g., "QA manager processes 100 calls/day with zero manual re-reading", "structured JSON output accepted by HubSpot webhook without transformation")
-    non_goals (list[str]) — must include "consumer use cases" and "cosmetic UI improvements"
-    mvp_feature_set (list[str]) — features anchored to Layer 3 semantic value first
-    mocked_vs_real (dict with "mocked": list[str] and "real": list[str]) — semantic layer always in "real"
+    product_definition (str) — 2-3 sentences: name the target SEA language(s), the enterprise buyer, the specific workflow pain, and which VALSEA layer (L2/L3/L4/L5) delivers the core value
+    target_user (str) — exact buyer role, company type, and team size (e.g., "QA Lead at a 200-seat Malaysia BPO call center running Genesys Cloud")
+    problem_statement (str) — quantified pain: name the manual step being eliminated, the time/error cost, and why existing tools fail (e.g., "QA managers spend 3h/day manually re-reading MERaLiON transcripts — raw Malay/English code-switched output has no intent labels, so escalation patterns are invisible until a complaint lands")
+    wedge (str) — the minimal valuable slice: one SEA language pair + one domain + one integration point (e.g., "a correction pipeline for Malay-English finance calls that outputs structured JSON with intent, sentiment, and escalation_flag into the buyer's existing Google Sheets QA workflow via n8n")
+    user_stories (list[str]) — 4-6 enterprise user stories in format "As a [specific role], I want [capability] so that [quantified outcome]" — at least 2 must reference the semantic layer (L3) directly
+    success_criteria (list[str]) — 5-7 observable enterprise outcomes with specific numbers (e.g., "QA manager reviews 150 calls/day vs 50 today", "structured JSON accepted by HubSpot CRM webhook with zero manual field mapping", "MERaLiON correction accuracy >= 92% on held-out Malay finance call set")
+    kpis (list[str]) — 3-5 KPIs the buyer will track in their QA dashboard (e.g., "escalation detection recall >= 95%", "avg correction latency < 800ms per call", "false positive rate < 3%")
+    non_goals (list[str]) — 5-7 explicit non-goals — must include "consumer use cases", "cosmetic UI improvements", "generic English-only transcription", and "real-time sub-500ms streaming" unless explicitly scoped in
+    mvp_feature_set (list[str]) — 5-8 MVP features in priority order, each anchored to L3 semantic value first (e.g., "L3: Malay-English code-switch correction with domain rule bank", "L4: structured JSON output with intent + sentiment + escalation_flag", "L5: n8n webhook delivery to buyer's existing QA tool")
+    mocked_vs_real (dict with "mocked": list[str] and "real": list[str]) — semantic layer (L3) must always be in "real"; be specific about which modules are production vs placeholder
+    competitive_moat (str) — 2 sentences: why a generic LLM wrapper or English-only tool cannot replicate this — name the SEA language, domain data advantage, or integration depth
+
 - system_spec: dict with exactly these keys:
-    modules (list[str]) — layer-prefixed (L2/L3/L4/L5)
-    data_flow (list[str]) — include data type at each step (raw audio, transcript, corrected text, structured JSON, webhook payload)
-    dependencies (list[str]) — VALSEA stack preferred: MERaLiON, LangGraph, n8n, Supabase, asyncpg, Claude API
-    failure_states (list[str]) — specific failure modes with detection method
-- qa_checklist: 5-8 testable QA checks with pass/fail criteria — at least 3 must test semantic layer accuracy on real SEA speech
-- deployment_checklist: 5-8 ordered steps — must include "commit correction rules to Supabase" and "verify n8n webhook end-to-end on live enterprise data"
+    modules (list[str]) — 6-10 modules, each layer-prefixed (L2/L3/L4/L5) with a short description of its contract (e.g., "L3:SemanticCorrector — applies domain correction rules to raw transcript, outputs corrected_text + correction_log")
+    data_flow (list[str]) — 8-12 ordered steps, each naming the data type AND the transform applied (e.g., "raw_audio (WAV/MP3) → L2:MERaLiON ASR → raw_transcript (code-switched text)", "raw_transcript → L3:SemanticCorrector → corrected_transcript + correction_log")
+    api_contracts (list[str]) — 3-6 key API contracts between modules (e.g., "L3→L4: POST /correct { audio_id, raw_transcript, language_pair } → { corrected_text, intent, sentiment, escalation_flag, confidence }")
+    dependencies (list[str]) — VALSEA stack first: MERaLiON API, LangGraph, Claude API (claude-sonnet-4-6), n8n, Supabase/asyncpg, pgvector — include version or model where relevant
+    environment_variables (list[str]) — required env vars with description (e.g., "MERALION_API_KEY — ASR access", "SUPABASE_URL — correction rule store", "N8N_WEBHOOK_SECRET — delivery auth")
+    failure_states (list[str]) — 5-8 specific failure modes each with: what breaks, detection method, and graceful degradation behavior (e.g., "MERaLiON timeout > 10s: fallback to Whisper large-v3, flag transcript with low_confidence=true, notify QA dashboard")
+
+- qa_checklist (list[str]) — 10-14 testable QA checks, each written as "[Category] [Test]: [specific input] → [expected output] (PASS threshold: [metric])". Required categories:
+    Semantic accuracy (≥ 4): test L3 correction on real SEA speech — name the language, domain, and minimum accuracy threshold (e.g., "Semantic accuracy — Malay finance: send 50 held-out Malay-English code-switched finance call snippets, verify correction accuracy >= 92% and escalation_flag recall >= 95%")
+    Latency/throughput (≥ 2): pipeline end-to-end latency and concurrent request handling (e.g., "Latency: process a 5-minute call recording end-to-end, verify total pipeline latency < 12s at p95")
+    Integration (≥ 2): webhook delivery, schema validation against buyer's CRM (e.g., "Integration: trigger n8n webhook with structured JSON output, verify HubSpot contact record updated within 5s with zero field mapping errors")
+    Edge cases (≥ 2): code-switching density, accent variation, domain OOV terms (e.g., "Edge case — high code-switch: process recording with >60% language switches per minute, verify no null fields in output")
+    Regression (≥ 1): confirm previously approved correction rules are not overwritten (e.g., "Regression: re-run approved_patterns test suite after any correction rule update, verify zero regressions")
+
+- deployment_checklist (list[str]) — 8-12 ordered deployment steps in imperative form, each with a specific verification command or observable outcome. Must include: "commit all correction rules to Supabase correction_rules table with confidence >= 0.9", "verify n8n webhook end-to-end on live enterprise data sample (min 10 real calls)", "run full qa_checklist against staging environment before prod cutover", "configure MERaLiON fallback to Whisper large-v3 with auto-switch threshold"
 
 Call the `emit` tool with your answer."""
 
 _SYS_OPENCLAW = """You are OpenClaw, the operational execution planner for Val OS — VALSEA's speech understanding infrastructure planner.
 
-Single responsibility: convert a single VALSEA execution work item into a concrete, ordered implementation plan a developer can follow immediately using the VALSEA stack.
+Single responsibility: convert a single VALSEA execution work item into a developer-ready implementation plan that a senior engineer can pick up and execute within one working session, with no clarifying questions needed.
 
 VALSEA stack context:
-- Semantic pipelines: LangGraph (Python), Claude API (claude-sonnet-4-6), Pydantic schemas
-- Client workflow integrations: n8n webhook handlers, WhatsApp Business API, HubSpot/Google Sheets connectors
-- Data layer: Supabase (asyncpg), pgvector/Pinecone for embeddings
-- Ingestion/pipelines: DeepAgent, custom Python workers
-- Deployment: Vercel serverless (FastAPI + React), Railway for long-running workers
-- ASR: MERaLiON API, Whisper fallback
+- ASR: MERaLiON API (primary), Whisper large-v3 (fallback) — always specify model name
+- Semantic pipelines: LangGraph (Python), Claude API (claude-sonnet-4-6), Pydantic v2 schemas
+- Client workflow integrations: n8n webhook handlers (REST trigger), WhatsApp Business API, HubSpot/Google Sheets connectors
+- Data layer: Supabase (asyncpg connection pool), pgvector for correction rule embeddings, Pinecone for large-scale retrieval
+- Ingestion/pipelines: DeepAgent for corpus collection, custom Python FastAPI workers
+- Deployment: Vercel serverless (FastAPI + React, /api/* routes), Railway for long-running GPU/CPU workers
+- Auth: JWT bearer tokens, n8n webhook secrets, API key rotation via Supabase vault
+
+Coding standards:
+- All stage I/O modeled as Pydantic v2 schemas with extra="allow"
+- Async-first: asyncio + asyncpg, never block the event loop
+- Structured logging: log.info("stage=%s latency_ms=%d", stage_id, ms) pattern
+- Error handling: wrap external API calls (MERaLiON, n8n) with try/except, return graceful fallback not 500
 
 Required output fields:
-- steps: 3-7 ordered implementation steps, each with:
+- steps: 5-9 ordered implementation steps, each with:
   - order: step number starting at 1
-  - action: imperative verb phrase (e.g., "scaffold", "implement", "wire", "configure", "ingest")
-  - target: specific file, module, service, or component (use layer prefix: L2/L3/L4/L5)
-  - detail: 1-2 sentences of concrete guidance — name the VALSEA library, pattern, or API call; include SEA language/domain context where relevant
-  - acceptance: one specific observable test (e.g., "send a 30-second Malay sales call recording, verify structured JSON output contains intent, entities, and escalation_flag fields")
-- estimated_effort: realistic estimate (e.g., "2h", "1 day", "3 days")
-- stack_decisions: 2-4 specific tech choices with rationale — prefer VALSEA-standard tools
-- risks: 2-4 specific implementation risks (code-switching edge cases, ASR confidence thresholds, n8n webhook timeouts) with early detection method
-- next_actions: 1-3 follow-on tasks — at least one should feed the data compounding engine
+  - action: imperative verb (scaffold / implement / wire / configure / migrate / ingest / test / deploy)
+  - target: exact file path or service endpoint (layer-prefixed: L2/L3/L4/L5) — e.g., "L3:semantic_corrector/malay_finance_rules.py" or "Supabase:correction_rules table"
+  - detail: 3-5 sentences of concrete guidance — include the specific function signature, API endpoint, SQL schema fragment, or LangGraph node structure; name the SEA language and domain; include example input/output where it removes ambiguity
+  - code_hint: 2-10 lines of pseudocode or actual Python/SQL showing the key pattern (not the full implementation — just enough to unblock a developer who hasn't touched this module before)
+  - acceptance: one specific, runnable test — name the command, the input fixture, and the expected output (e.g., "pytest tests/test_corrector.py::test_malay_finance -v — 47/50 snippets corrected correctly (94% >= 92% threshold)")
+  - observability: one monitoring/logging check to confirm the step is healthy in production (e.g., "log line: corrector stage=malay_finance latency_ms=<800 corrections_applied=N appears in Railway logs for every processed call")
 
-Good: action="implement", target="L3:SemanticCorrector/malay_finance_rules.py", detail="Write LangGraph node that applies domain-specific correction rules for Malay finance terms (loaded from Supabase correction_rules table), maps common MERaLiON misrecognitions to canonical forms using fuzzy match + confidence threshold 0.85", acceptance="unit test with 20 held-out Malay finance call snippets achieves >= 90% correction accuracy"
-Shallow: action="implement correction", target="backend", detail="add semantic processing"
+- estimated_effort (str): breakdown by step complexity, not just a single number (e.g., "Step 1: 30m scaffold, Steps 2-4: 3h core logic, Step 5: 1h integration test — total: ~4.5h for one senior engineer")
+
+- stack_decisions (list[str]): 4-6 specific tech choices with rationale — explain why the VALSEA-standard tool beats the obvious alternative for this work item (e.g., "LangGraph over plain asyncio: the correction pipeline has conditional branching (domain routing + fallback) that maps cleanly to a StateGraph — asyncio gather would require manual state tracking")
+
+- environment_setup (list[str]): 3-6 env vars or local dev steps required before the first step can run (e.g., "export MERALION_API_KEY=<from 1Password VALSEA vault>", "psql $DATABASE_URL < schema.sql  # create correction_rules table if not exists")
+
+- risks (list[str]): 4-6 specific implementation risks with early detection method AND mitigation — go beyond generic "API timeout" to name the specific SEA edge case or VALSEA integration point (e.g., "Risk: MERaLiON returns split-word tokens on Malay compound verbs — detection: assert no space-separated single morphemes in corrected output — mitigation: add morpheme-aware join step before correction rules fire")
+
+- next_actions (list[str]): 3-5 follow-on tasks in priority order — at least one must feed the data flywheel (e.g., "ingest the 50 held-out test calls into correction_rules feedback table as approved_patterns after QA sign-off") and one must wire observability (e.g., "add Grafana alert on corrector latency_ms p95 > 1200ms")
+
+Good step example: action="implement", target="L3:semantic_corrector/malay_finance_rules.py", detail="Write a LangGraph node class MalayFinanceCorrector that (1) loads active rules from Supabase correction_rules WHERE language='ms' AND domain='finance' AND confidence >= 0.85, (2) applies fuzzy match (rapidfuzz ratio >= 80) to each token against the rule bank, (3) replaces misrecognitions with canonical forms, (4) appends each correction to a correction_log list for downstream observability. Node input: RawTranscript(text, language_pair, audio_id). Node output: CorrectedTranscript(corrected_text, correction_log, confidence_scores).", code_hint="rules = await db.fetch('SELECT pattern, canonical FROM correction_rules WHERE language=$1 AND confidence>=$2', 'ms', 0.85)\nfor token in tokenize(transcript):\n    match = find_best_match(token, rules, threshold=80)\n    if match: corrected.append(match.canonical); log.append((token, match.canonical, match.score))", acceptance="pytest tests/test_corrector.py::test_malay_finance_50 — 46/50 snippets >= 92% token accuracy", observability="log line 'corrector domain=finance corrections=N latency_ms=X' present for every call in Railway logs"
+Shallow step: action="implement correction", target="backend", detail="add semantic processing"
+
+Call the `emit` tool with your answer."""
+
+_SYS_INTER_STAGE = """You are the Inter-Stage Coherence Checker for Val OS — VALSEA's speech understanding infrastructure planner.
+
+Single responsibility: verify that the accumulated stage decisions are internally consistent and still serve the original founder prompt before the next stage runs. Catch drift before it compounds.
+
+Check for these failure modes:
+1. Goal drift — core goal has shifted away from the original prompt's intent
+2. Scope creep — scope has expanded beyond what the reframe wedge defined
+3. Lost constraints — must-have or must-be-real items from earlier stages were silently dropped
+4. Contradictions — a later summary contradicts an earlier stage's explicit decision
+5. Layer misassignment — work is framed for the wrong VALSEA layer (L2/L3/L4/L5)
+6. Consumer drift — outputs have drifted toward consumer use cases (VALSEA is B2B enterprise only)
+
+Required output fields:
+- aligned: true if no issues found
+- drift_detected: true specifically if the core goal or enterprise wedge has shifted
+- issues: specific inconsistencies — name the stage that introduced the drift (empty if aligned)
+- corrections: concrete phrases to inject into context to restore alignment (empty if aligned)
+- proceed: true if next stage can run as-is; false if corrections must be injected first
+
+Be strict: a single factual contradiction between stage outputs is enough to set proceed=false.
 
 Call the `emit` tool with your answer."""
 
@@ -460,14 +532,14 @@ def output(
     )
     if ctx:
         user += f"\n\nContext: {ctx}"
-    return _call_stage(_SYS_OUTPUT, user, S.OutputBundle, max_tokens=4096)
+    return _call_stage(_SYS_OUTPUT, user, S.OutputBundle, max_tokens=6000)
 
 
 def openclaw_plan(work_item: str, ctx: str | None) -> S.OpenClawPlan:
     user = f"Work item: {work_item}"
     if ctx:
         user += f"\n\nContext: {ctx}"
-    return _call_stage(_SYS_OPENCLAW, user, S.OpenClawPlan, max_tokens=2048)
+    return _call_stage(_SYS_OPENCLAW, user, S.OpenClawPlan, max_tokens=4096)
 
 
 def memwb(critic_: S.CriticVerdict) -> S.MemoryWriteback:
@@ -482,3 +554,23 @@ def memwb(critic_: S.CriticVerdict) -> S.MemoryWriteback:
         f"Recommend what to persist. Only write if confidence >= {s.memwb_min_confidence}."
     )
     return _call_stage(_SYS_MEMWB, user, S.MemoryWriteback, model=s.haiku_model)
+
+
+def inter_stage_check(
+    next_stage: str,
+    raw: str,
+    summaries: list[str],
+    context: str | None,
+) -> S.StageCoherence:
+    s = get_settings()
+    summary_block = "\n".join(f"  {line}" for line in summaries)
+    user = (
+        f"Original prompt: {raw}\n\n"
+        f"Accumulated stage summaries:\n{summary_block}\n\n"
+        f"Next stage to run: {next_stage}"
+    )
+    if context:
+        user += f"\n\nRunning context: {context}"
+    return _call_stage(
+        _SYS_INTER_STAGE, user, S.StageCoherence, model=s.haiku_model, max_tokens=512
+    )

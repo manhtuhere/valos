@@ -33,6 +33,7 @@ from schemas import (
     PlanRequest,
     ReviseRequest,
     RoutingPlan,
+    StageCoherence,
     WorkerResponse,
 )
 from workers import dispatch_routes
@@ -68,6 +69,15 @@ def _apply_critic_fixes_to_context(base_ctx: str | None, critic: CriticVerdict) 
         parts.append("Critic flagged the following failures: " + "; ".join(critic.failures))
     if critic.fixes:
         parts.append("Apply these fixes: " + "; ".join(critic.fixes))
+    return "\n".join(parts)
+
+
+def _apply_coherence_corrections(running_ctx: str | None, coh: StageCoherence) -> str:
+    parts: list[str] = [running_ctx] if running_ctx else []
+    if coh.issues:
+        parts.append("Coherence issues detected: " + "; ".join(coh.issues))
+    if coh.corrections:
+        parts.append("Apply these corrections: " + "; ".join(coh.corrections))
     return "\n".join(parts)
 
 
@@ -118,30 +128,72 @@ async def _run_pipeline(
         log.warning("memory retrieve failed: %s (continuing with empty context)", e)
         mem_ctx = MemoryContext(rows=[])
 
-    intent_ = await asyncio.to_thread(brain.intent, raw_prompt, ctx)
-    reframe_ = await asyncio.to_thread(brain.reframe, raw_prompt, ctx, intent_)
-    scope_ = await asyncio.to_thread(brain.scope, raw_prompt, ctx, intent_, reframe_)
-    arch = await asyncio.to_thread(brain.architect, raw_prompt, ctx, intent_, reframe_, scope_)
+    running_ctx = ctx
+
+    intent_ = await asyncio.to_thread(brain.intent, raw_prompt, running_ctx)
+
+    coh = await asyncio.to_thread(brain.inter_stage_check, "reframe", raw_prompt, [brain._ctx_intent(intent_)], running_ctx)
+    log.info("coherence/reframe: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+    reframe_ = await asyncio.to_thread(brain.reframe, raw_prompt, running_ctx, intent_)
+
+    coh = await asyncio.to_thread(brain.inter_stage_check, "scope", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_)], running_ctx)
+    log.info("coherence/scope: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+    scope_ = await asyncio.to_thread(brain.scope, raw_prompt, running_ctx, intent_, reframe_)
+
+    coh = await asyncio.to_thread(brain.inter_stage_check, "architect", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_)], running_ctx)
+    log.info("coherence/architect: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+    arch = await asyncio.to_thread(brain.architect, raw_prompt, running_ctx, intent_, reframe_, scope_)
+
+    coh = await asyncio.to_thread(brain.inter_stage_check, "research+execution", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch)], running_ctx)
+    log.info("coherence/research+execution: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
     research_, execution_ = await asyncio.gather(
-        asyncio.to_thread(brain.research, raw_prompt, ctx, reframe_, scope_, arch),
-        asyncio.to_thread(brain.execution, raw_prompt, ctx, scope_, arch),
+        asyncio.to_thread(brain.research, raw_prompt, running_ctx, reframe_, scope_, arch),
+        asyncio.to_thread(brain.execution, raw_prompt, running_ctx, scope_, arch),
     )
+
+    coh = await asyncio.to_thread(brain.inter_stage_check, "router", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch), brain._ctx_research(research_), brain._ctx_execution(execution_)], running_ctx)
+    log.info("coherence/router: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
     routing: RoutingPlan = await asyncio.to_thread(
         brain.router, scope_, arch, research_, execution_, min_confidence=s.router_min_confidence
     )
+
+    coh = await asyncio.to_thread(brain.inter_stage_check, "critic", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch), brain._ctx_research(research_), brain._ctx_execution(execution_), brain._ctx_routing(routing)], running_ctx)
+    log.info("coherence/critic: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
 
     bundle_for_critic = {
         "architecture": arch.model_dump(), "scope": scope_.model_dump(),
         "research": research_.model_dump(), "execution": execution_.model_dump(),
         "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
     }
-    critic_ = await asyncio.to_thread(brain.critic, raw_prompt, ctx, bundle_for_critic)
+    critic_ = await asyncio.to_thread(brain.critic, raw_prompt, running_ctx, bundle_for_critic)
 
     revisions = starting_revisions
     while auto_revise and critic_.status == "revise" and revisions < s.max_revisions:
         revisions += 1
-        new_ctx = _apply_critic_fixes_to_context(ctx, critic_)
+        new_ctx = _apply_critic_fixes_to_context(running_ctx, critic_)
         log.info("revision %d/%d — re-running with critic fixes", revisions, s.max_revisions)
+
+        coh = await asyncio.to_thread(brain.inter_stage_check, "scope[revision]", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_critic(critic_)], new_ctx)
+        if not coh.proceed:
+            new_ctx = _apply_coherence_corrections(new_ctx, coh)
+
         scope_ = await asyncio.to_thread(brain.scope, raw_prompt, new_ctx, intent_, reframe_)
         arch = await asyncio.to_thread(brain.architect, raw_prompt, new_ctx, intent_, reframe_, scope_)
         research_, execution_ = await asyncio.gather(
@@ -161,18 +213,23 @@ async def _run_pipeline(
     if dispatch and critic_.status in ("approve", "revise"):
         routes_json = [r.model_dump() for r in routing.routes]
         worker_feedback = await dispatch_routes(
-            routes_json, ctx, openclaw_url=openclaw_url, openclaw_token=openclaw_token
+            routes_json, running_ctx, openclaw_url=openclaw_url, openclaw_token=openclaw_token
         )
         needs_rev = [w for w in worker_feedback if w.status == "needs_revision"]
         if needs_rev:
             notes = "; ".join(f"{w.worker}: {w.logs[0] if w.logs else 'needs_revision'}" for w in needs_rev)
-            critic_ = await asyncio.to_thread(brain.critic, raw_prompt, f"{ctx or ''}\nWorker feedback: {notes}", {
+            critic_ = await asyncio.to_thread(brain.critic, raw_prompt, f"{running_ctx or ''}\nWorker feedback: {notes}", {
                 "architecture": arch.model_dump(), "scope": scope_.model_dump(),
                 "research": research_.model_dump(), "execution": execution_.model_dump(),
                 "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
             })
 
-    output_ = await asyncio.to_thread(brain.output, raw_prompt, ctx, intent_, reframe_, scope_, arch)
+    coh = await asyncio.to_thread(brain.inter_stage_check, "output", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch), brain._ctx_critic(critic_)], running_ctx)
+    log.info("coherence/output: aligned=%s proceed=%s", coh.aligned, coh.proceed)
+    if not coh.proceed:
+        running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+    output_ = await asyncio.to_thread(brain.output, raw_prompt, running_ctx, intent_, reframe_, scope_, arch)
     memwb = await asyncio.to_thread(brain.memwb, critic_)
 
     bundle = PlanBundle(
@@ -215,43 +272,81 @@ async def _run_pipeline_stream(
     yield _sse("memory", mem_ctx.model_dump())
 
     try:
-        intent_ = await asyncio.to_thread(brain.intent, raw_prompt, ctx)
+        running_ctx = ctx
+
+        intent_ = await asyncio.to_thread(brain.intent, raw_prompt, running_ctx)
         yield _sse("intent", intent_.model_dump())
 
-        reframe_ = await asyncio.to_thread(brain.reframe, raw_prompt, ctx, intent_)
+        coh = await asyncio.to_thread(brain.inter_stage_check, "reframe", raw_prompt, [brain._ctx_intent(intent_)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "reframe"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+        reframe_ = await asyncio.to_thread(brain.reframe, raw_prompt, running_ctx, intent_)
         yield _sse("reframe", reframe_.model_dump())
 
-        scope_ = await asyncio.to_thread(brain.scope, raw_prompt, ctx, intent_, reframe_)
+        coh = await asyncio.to_thread(brain.inter_stage_check, "scope", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "scope"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+        scope_ = await asyncio.to_thread(brain.scope, raw_prompt, running_ctx, intent_, reframe_)
         yield _sse("scope", scope_.model_dump())
 
-        arch = await asyncio.to_thread(brain.architect, raw_prompt, ctx, intent_, reframe_, scope_)
+        coh = await asyncio.to_thread(brain.inter_stage_check, "architect", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "architect"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+        arch = await asyncio.to_thread(brain.architect, raw_prompt, running_ctx, intent_, reframe_, scope_)
         yield _sse("architect", arch.model_dump())
 
+        coh = await asyncio.to_thread(brain.inter_stage_check, "research+execution", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "research+execution"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
         research_, execution_ = await asyncio.gather(
-            asyncio.to_thread(brain.research, raw_prompt, ctx, reframe_, scope_, arch),
-            asyncio.to_thread(brain.execution, raw_prompt, ctx, scope_, arch),
+            asyncio.to_thread(brain.research, raw_prompt, running_ctx, reframe_, scope_, arch),
+            asyncio.to_thread(brain.execution, raw_prompt, running_ctx, scope_, arch),
         )
         yield _sse("research", research_.model_dump())
         yield _sse("execution", execution_.model_dump())
+
+        coh = await asyncio.to_thread(brain.inter_stage_check, "router", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch), brain._ctx_research(research_), brain._ctx_execution(execution_)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "router"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
 
         routing = await asyncio.to_thread(
             brain.router, scope_, arch, research_, execution_, min_confidence=s.router_min_confidence
         )
         yield _sse("router", routing.model_dump())
 
+        coh = await asyncio.to_thread(brain.inter_stage_check, "critic", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch), brain._ctx_research(research_), brain._ctx_execution(execution_), brain._ctx_routing(routing)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "critic"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
         bundle_for_critic = {
             "architecture": arch.model_dump(), "scope": scope_.model_dump(),
             "research": research_.model_dump(), "execution": execution_.model_dump(),
             "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
         }
-        critic_ = await asyncio.to_thread(brain.critic, raw_prompt, ctx, bundle_for_critic)
+        critic_ = await asyncio.to_thread(brain.critic, raw_prompt, running_ctx, bundle_for_critic)
         yield _sse("critic", critic_.model_dump())
 
         revisions = 0
         while auto_revise and critic_.status == "revise" and revisions < s.max_revisions:
             revisions += 1
-            new_ctx = _apply_critic_fixes_to_context(ctx, critic_)
+            new_ctx = _apply_critic_fixes_to_context(running_ctx, critic_)
             log.info("revision %d/%d — re-running with critic fixes", revisions, s.max_revisions)
+
+            coh = await asyncio.to_thread(brain.inter_stage_check, "scope[revision]", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_critic(critic_)], new_ctx)
+            yield _sse("coherence", {**coh.model_dump(), "before": "scope", "revision": revisions})
+            if not coh.proceed:
+                new_ctx = _apply_coherence_corrections(new_ctx, coh)
+
             scope_ = await asyncio.to_thread(brain.scope, raw_prompt, new_ctx, intent_, reframe_)
             arch = await asyncio.to_thread(brain.architect, raw_prompt, new_ctx, intent_, reframe_, scope_)
             research_, execution_ = await asyncio.gather(
@@ -277,7 +372,7 @@ async def _run_pipeline_stream(
         if dispatch and critic_.status in ("approve", "revise"):
             routes_json = [r.model_dump() for r in routing.routes]
             worker_results = await dispatch_routes(
-                routes_json, ctx, openclaw_url=openclaw_url, openclaw_token=openclaw_token
+                routes_json, running_ctx, openclaw_url=openclaw_url, openclaw_token=openclaw_token
             )
             for wr in worker_results:
                 worker_feedback.append(wr)
@@ -287,14 +382,19 @@ async def _run_pipeline_stream(
                 notes = "; ".join(
                     f"{w.worker}: {w.logs[0] if w.logs else 'needs_revision'}" for w in needs_rev
                 )
-                critic_ = await asyncio.to_thread(brain.critic, raw_prompt, f"{ctx or ''}\nWorker feedback: {notes}", {
+                critic_ = await asyncio.to_thread(brain.critic, raw_prompt, f"{running_ctx or ''}\nWorker feedback: {notes}", {
                     "architecture": arch.model_dump(), "scope": scope_.model_dump(),
                     "research": research_.model_dump(), "execution": execution_.model_dump(),
                     "reframe": reframe_.model_dump(), "routing": routing.model_dump(),
                 })
                 yield _sse("critic", {**critic_.model_dump(), "revision": revisions})
 
-        output_ = await asyncio.to_thread(brain.output, raw_prompt, ctx, intent_, reframe_, scope_, arch)
+        coh = await asyncio.to_thread(brain.inter_stage_check, "output", raw_prompt, [brain._ctx_intent(intent_), brain._ctx_reframe(reframe_), brain._ctx_scope(scope_), brain._ctx_arch(arch), brain._ctx_critic(critic_)], running_ctx)
+        yield _sse("coherence", {**coh.model_dump(), "before": "output"})
+        if not coh.proceed:
+            running_ctx = _apply_coherence_corrections(running_ctx, coh)
+
+        output_ = await asyncio.to_thread(brain.output, raw_prompt, running_ctx, intent_, reframe_, scope_, arch)
         yield _sse("output", output_.model_dump())
 
         memwb_ = await asyncio.to_thread(brain.memwb, critic_)

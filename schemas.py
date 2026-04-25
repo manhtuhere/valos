@@ -159,15 +159,26 @@ class OpenClawStep(_Base):
     action: str
     target: str
     detail: str
+    code_hint: str = ""
     acceptance: str
+    observability: str = ""
 
 
 class OpenClawPlan(_Base):
     steps: list[OpenClawStep]
     estimated_effort: str
     stack_decisions: list[str] = []
+    environment_setup: list[str] = []
     risks: list[str] = []
     next_actions: list[str] = []
+
+
+class StageCoherence(_Base):
+    aligned: bool
+    drift_detected: bool = False
+    issues: list[str] = []
+    corrections: list[str] = []
+    proceed: bool = True
 
 
 class WorkerResponse(_Base):
@@ -197,7 +208,7 @@ class MemoryWriteback(_Base):
 class OutputBundle(_Base):
     prd: dict[str, Any]
     system_spec: dict[str, Any] = {}
-    qa_checklist: list[str] = []
+    qa_checklist: list[Any] = []
     deployment_checklist: list[str] = []
 
     @field_validator("prd", "system_spec", mode="before")

@@ -61,16 +61,56 @@ function PendingJobCard({ task }) {
 }
 
 function buildPrompt(task) {
-  const deps = task.depends_on?.length ? `\nDepends on: ${task.depends_on.join(", ")}` : "";
-  const criteria = task.acceptance_criteria?.length
-    ? `\nAcceptance criteria:\n${task.acceptance_criteria.map((c) => `  - ${c}`).join("\n")}`
+  const deps = task.depends_on?.length
+    ? `\nDepends on: ${task.depends_on.join(", ")}`
     : "";
-  return `Task: ${task.task_id} — ${task.title}
-Owner: ${task.owner_type}${deps}${criteria}
+  const criteria = task.acceptance_criteria?.length
+    ? `\nAcceptance criteria:\n${task.acceptance_criteria.map((c) => `  ✓ ${c}`).join("\n")}`
+    : "";
+  const layer = task.layer ? `\nVALSEA layer: ${task.layer}` : "";
+  const mockable = task.mockable != null ? `\nMockable: ${task.mockable ? "yes — placeholder acceptable for MVP" : "no — must be real for semantic correctness"}` : "";
 
-Produce a concrete, ordered implementation plan a developer can follow immediately.
-Use the VALSEA stack: LangGraph, Claude API, Supabase/asyncpg, n8n, Vercel/Railway.
-Return steps with: action, target file/service, detail, and acceptance check.`;
+  return `═══════════════════════════════════════════
+OPENCLAW EXECUTION PROMPT
+═══════════════════════════════════════════
+Task:    ${task.task_id} — ${task.title}
+Owner:   ${task.owner_type}${layer}${mockable}${deps}${criteria}
+
+You are OpenClaw, VALSEA's operational execution planner.
+Convert this work item into a developer-ready implementation plan that a senior
+engineer can execute in one session with no clarifying questions needed.
+
+VALSEA STACK
+  ASR:       MERaLiON API (primary) · Whisper large-v3 (fallback)
+  Pipelines: LangGraph · Claude API (claude-sonnet-4-6) · Pydantic v2
+  Workflows: n8n webhook handlers · WhatsApp Business API · HubSpot connectors
+  Data:      Supabase/asyncpg · pgvector · Pinecone
+  Deploy:    Vercel serverless (/api/* FastAPI) · Railway (long-running workers)
+
+CODING STANDARDS
+  - All I/O: Pydantic v2 schema with extra="allow"
+  - Async-first: asyncio + asyncpg, never block event loop
+  - Logging: log.info("stage=%s latency_ms=%d", id, ms) per step
+  - Errors: try/except on every external call, return graceful fallback
+
+REQUIRED OUTPUT (5-9 steps)
+Each step must include:
+  order       — step number
+  action      — scaffold / implement / wire / configure / migrate / test / deploy
+  target      — exact file path or endpoint (layer-prefixed: L2/L3/L4/L5)
+  detail      — 3-5 sentences: function signature, API call, SQL schema, or
+                LangGraph node structure; name SEA language + domain
+  code_hint   — 2-10 lines pseudocode or Python/SQL unblocking the key pattern
+  acceptance  — runnable test: command + input fixture + expected output + threshold
+  observability — one log line or metric that confirms the step is healthy in prod
+
+Plus:
+  estimated_effort  — per-step breakdown, not just a total (e.g., "Step 1: 30m, Steps 2-4: 3h")
+  stack_decisions   — 4-6 tool choices with rationale vs the obvious alternative
+  environment_setup — env vars + local dev commands needed before step 1
+  risks             — 4-6 risks with SEA-specific edge case + detection + mitigation
+  next_actions      — 3-5 follow-ons; ≥1 feeds data flywheel, ≥1 wires observability
+═══════════════════════════════════════════`;
 }
 
 export default function WorkerCards({ workers, execution }) {
