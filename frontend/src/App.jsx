@@ -51,15 +51,23 @@ export default function App() {
     () => localStorage.getItem("openclaw_token") || ""
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lightMode, setLightMode] = useState(
+    () => localStorage.getItem("valos-theme") === "light"
+  );
 
   useEffect(() => { localStorage.setItem("openclaw_url", openclawUrl); }, [openclawUrl]);
   useEffect(() => { localStorage.setItem("openclaw_token", openclawToken); }, [openclawToken]);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", lightMode ? "light" : "dark");
+    localStorage.setItem("valos-theme", lightMode ? "light" : "dark");
+  }, [lightMode]);
 
   const [stageStates, setStageStates] = useState(initStageStates);
   const [bundle, setBundle] = useState({});
   const [revisions, setRevisions] = useState(0);
   const [retrievedIds, setRetrievedIds] = useState(new Set());
   const [running, setRunning] = useState(false);
+  const [gateResult, setGateResult] = useState(null);
 
   const [activeTab, setActiveTab] = useState("prd");
   const [activeMemTab, setActiveMemTab] = useState("all");
@@ -80,12 +88,14 @@ export default function App() {
 
   const { runPipeline, reviseAndRerun, resetRun } = usePipeline({
     setStageStates, setBundle, setRevisions, setRetrievedIds, setMetrics,
+    setGateResult,
     demoMode, backendMode, autoRevise, apiKey, model, backendUrl,
     openclawUrl, openclawToken,
   });
 
   async function handleRun() {
     if (!rawPrompt.trim()) { alert("Enter a prompt first"); return; }
+    setGateResult(null);
     setRunning(true);
     try { await runPipeline(rawPrompt.trim(), ctx.trim()); }
     catch (e) { console.error(e); alert("Pipeline failed: " + (e.message || e)); }
@@ -97,6 +107,7 @@ export default function App() {
     setRevisions(0);
     setRetrievedIds(new Set());
     setMetrics(initMetrics);
+    setGateResult(null);
   }
 
   async function handleReviseAndRerun() {
@@ -119,6 +130,7 @@ export default function App() {
         backendUrl={backendUrl} setBackendUrl={setBackendUrl}
         onOpenSettings={() => setSettingsOpen(true)}
         hasOpenclawToken={!!openclawToken}
+        lightMode={lightMode} setLightMode={setLightMode}
       />
       <SettingsModal
         open={settingsOpen}
@@ -136,6 +148,7 @@ export default function App() {
           activeMemTab={activeMemTab} setActiveMemTab={setActiveMemTab}
           retrievedIds={retrievedIds}
           running={running}
+          gateResult={gateResult}
           onRun={handleRun}
           onSeed={() => setRawPrompt(SEED_PROMPT)}
           onClearPrompt={() => { setRawPrompt(""); setCtx(""); }}

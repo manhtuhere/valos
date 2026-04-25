@@ -14,6 +14,7 @@ export default function IntakePanel({
   setActiveMemTab,
   retrievedIds,
   running,
+  gateResult,
   onRun,
   onSeed,
   onClearPrompt,
@@ -88,6 +89,35 @@ export default function IntakePanel({
             onChange={(e) => setCtx(e.target.value)}
             disabled={running}
           />
+        </div>
+      )}
+
+      {gateResult && !gateResult.passed && (
+        <div className="gate-banner">
+          <div className="gate-banner-header">
+            <span className="gate-icon">✕</span>
+            <span>{gateResult.rejection_reason || "Prompt too vague for the planning engine."}</span>
+          </div>
+          <div className="gate-score-bar">
+            <div className="gate-score-fill" style={{ width: `${Math.round(gateResult.score * 100)}%` }} />
+          </div>
+          <div className="gate-score-label">score {Math.round(gateResult.score * 100)} / 100 — need ≥ 55 to proceed</div>
+          {gateResult.missing?.length > 0 && (
+            <>
+              <div className="gate-section-label">missing</div>
+              <ul className="gate-list">
+                {gateResult.missing.map((m) => <li key={m}>{m}</li>)}
+              </ul>
+            </>
+          )}
+          {gateResult.suggestions?.length > 0 && (
+            <>
+              <div className="gate-section-label">suggestions</div>
+              <ul className="gate-list gate-suggestion">
+                {gateResult.suggestions.map((s) => <li key={s}>{s}</li>)}
+              </ul>
+            </>
+          )}
         </div>
       )}
 

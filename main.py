@@ -31,6 +31,7 @@ from schemas import (
     MemoryWriteback,
     PlanBundle,
     PlanRequest,
+    PromptGate,
     ReviseRequest,
     RoutingPlan,
     StageCoherence,
@@ -121,6 +122,14 @@ async def _run_pipeline(
     t0 = time.monotonic()
     run_id = uuid.uuid4()
     intake = Intake(request_id=str(run_id), timestamp=_now_iso())
+
+    gate = await asyncio.to_thread(brain.prompt_gate, raw_prompt, ctx)
+    if not gate.passed:
+        log.info("prompt_gate rejected: score=%.2f reason=%r", gate.score, gate.rejection_reason)
+        raise HTTPException(status_code=422, detail={
+            "error": "weak_prompt",
+            "gate": gate.model_dump(),
+        })
 
     try:
         mem_ctx: MemoryContext = await memory.retrieve(raw_prompt, ctx)
@@ -263,6 +272,12 @@ async def _run_pipeline_stream(
 
     intake = Intake(request_id=str(run_id), timestamp=_now_iso())
     yield _sse("intake", intake.model_dump())
+
+    gate = await asyncio.to_thread(brain.prompt_gate, raw_prompt, ctx)
+    log.info("prompt_gate: score=%.2f passed=%s", gate.score, gate.passed)
+    yield _sse("prompt_gate", gate.model_dump(), done=not gate.passed)
+    if not gate.passed:
+        return
 
     try:
         mem_ctx: MemoryContext = await memory.retrieve(raw_prompt, ctx)
@@ -470,6 +485,12 @@ async def healthz() -> dict[str, Any]:
         "router_min_confidence": s.router_min_confidence,
         "max_revisions": s.max_revisions,
     }
+
+
+@api.post("/plan/check", response_model=PromptGate)
+async def plan_check(req: PlanRequest) -> PromptGate:
+    """Fast pre-flight gate — runs in ~200ms with Haiku. Call before /plan to surface weak-prompt feedback."""
+    return await asyncio.to_thread(brain.prompt_gate, req.raw_prompt, req.context)
 
 
 @api.post("/plan")

@@ -15,6 +15,8 @@ export default function Header({
   setBackendUrl,
   onOpenSettings,
   hasOpenclawToken,
+  lightMode,
+  setLightMode,
 }) {
   const realApiVisible = !demoMode && !backendMode;
 
@@ -91,6 +93,14 @@ export default function Header({
           </button>
         </>
       )}
+
+      <button
+        className="theme-btn"
+        onClick={() => setLightMode((v) => !v)}
+        title={lightMode ? "Switch to dark mode" : "Switch to light mode"}
+      >
+        {lightMode ? "☾" : "○"}
+      </button>
     </header>
   );
 }

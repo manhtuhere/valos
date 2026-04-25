@@ -21,6 +21,7 @@ export function usePipeline({
   setRevisions,
   setRetrievedIds,
   setMetrics,
+  setGateResult,
   demoMode,
   backendMode,
   autoRevise,
@@ -134,7 +135,15 @@ export function usePipeline({
         const stage = event.stage;
         acc[stage] = event.output;
 
-        if (stage === "memwb") {
+        if (stage === "prompt_gate") {
+          if (event.done && !event.output.passed) {
+            setGateResult && setGateResult(event.output);
+            return;
+          }
+          continue;
+        } else if (stage === "coherence") {
+          continue;
+        } else if (stage === "memwb") {
           stageUpdate("output", "done", {
             output: {
               output: acc.output,
